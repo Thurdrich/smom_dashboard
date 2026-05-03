@@ -38,8 +38,8 @@ authenticator.login(location='main')
 if st.session_state["authentication_status"]:
     # SUCCESS: Show the dashboard
     authenticator.logout('Logout', 'sidebar')
-    st.title("SMOM Dashboard")
-    st.sidebar.success(f"Welcome {st.session_state['name']}")
+    st.title("The Strategic Manpower Optimization Model")
+    st.sidebar.success(f"Welcome to a one of a kind Latimer Express Dashboard Module {st.session_state['name']}")
 
     # --- DATA LOADING ---
     try:
