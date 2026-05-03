@@ -8,13 +8,12 @@ import os
 # 1. Page Configuration
 st.set_page_config(page_title="STRATEGIC MANPOWER OPTIMIZATION MODEL", layout="wide")
 
-# 2. Authentication Setup (Updated for v0.3.0)
-# This is the "Dictionary" format the error was complaining about
+# 2. Authentication Setup
 credentials = {
     "usernames": {
         "admin": {
             "name": "Admin User",
-            "password": "Leianna1812$*" # In a real app, we'd hash this, but this works for now
+            "password": "Leianna1812$*"
         },
         "friend": {
             "name": "friend",
@@ -23,7 +22,7 @@ credentials = {
     }
 }
 
-# The library now handles the hashing internally if we set it up like this
+# The library
 authenticator = stauth.Authenticate(
     credentials,
     "manpower_dashboard",
@@ -32,7 +31,7 @@ authenticator = stauth.Authenticate(
 )
 
 # 3. Render Login
-# We use st.session_state to track if you're logged in
+# Login Tracker
 authenticator.login(location='main')
 
 if st.session_state["authentication_status"]:
@@ -43,9 +42,9 @@ if st.session_state["authentication_status"]:
 
     # --- DATA LOADING ---
     try:
-        # This part finds your CSV file automatically
+    
         base_path = os.path.dirname(__file__)
-        csv_path = os.path.join(base_path, 'clean_mcs.csv')
+        csv_path = os.path.join(base_path, 'clean_mcs.csv') #PUT DATA FILES
         df = pd.read_csv(csv_path)
         
         # --- FILTERS ---
@@ -81,8 +80,8 @@ if st.session_state["authentication_status"]:
 
     except Exception as e:
         st.error(f"Error loading data: {e}. Please ensure 'clean_mcs.csv' is in the same folder as this script.")
-
+#DATA FILE NAME MUST BE SAME AS ABOVE
 elif st.session_state["authentication_status"] is False:
-    st.error('Username/password is incorrect')
+    st.error('Username/password aint budging, I reckon you check then retry')
 elif st.session_state["authentication_status"] is None:
     st.warning('Please enter your username and password')
