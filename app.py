@@ -16,9 +16,9 @@ credentials = {
             "name": "Admin User",
             "password": "Leianna1812$*" # In a real app, we'd hash this, but this works for now
         },
-        "Latiimer_SMOM": {
-            "name": "Latiimer SMOM",
-            "password": "hcoteam#1"
+        "Latiimer_Guests": {
+            "name": "friend",
+            "password": "road2victory"
         }
     }
 }
