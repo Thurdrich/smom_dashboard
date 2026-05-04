@@ -6,7 +6,7 @@ import os
 from sklearn.linear_model import LinearRegression
 
 # Page Config for Professional Dashboard Look
-st.set_page_config(page_title="Strategic Manpower Optimization Module Dashboard", layout="wide")
+st.set_page_config(page_title="Strategic Manpower Optimization Module", layout="wide")
 
 @st.cache_data
 def load_and_clean_data():
