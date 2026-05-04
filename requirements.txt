@@ -1,4 +1,7 @@
-streamlit>=1.26.0,<2.0.0
-plotly>=5.18.0,<6.0.0
-pandas>=2.0.0,<3.0.0
-streamlit-authenticator>=0.3.0,<1.0.0
+%%writefile requirements.txt
+streamlit
+pandas
+plotly
+openpyxl
+scikit-learn
+statsmodels
