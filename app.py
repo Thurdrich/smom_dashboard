@@ -1,3 +1,4 @@
+%%writefile streamlit_app.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -56,7 +57,7 @@ if df is not None:
     # Budget Range Filter
     min_cost, max_cost = int(df['Cost_per_Billet'].min()), int(df['Cost_per_Billet'].max())
     cost_range = st.sidebar.slider(
-        "Select Cost per Billet Range ($)",
+        "Select Cost per Billet Range ($")",
         min_value=min_cost,
         max_value=max_cost,
         value=(min_cost, max_cost)
@@ -84,12 +85,16 @@ if df is not None:
     dff = dff[(dff['Model_Criticality_Score'] >= criticality_range[0]) & (dff['Model_Criticality_Score'] <= criticality_range[1])]
 
     # Display Metrics
+    st.subheader("Key Metrics")
     m1, m2, m3 = st.columns(3)
     m1.metric("Selected Billets", f"{len(dff):,}")
     m2.metric("Avg Criticality", f"{dff['Model_Criticality_Score'].mean():.2f}")
     m3.metric("Est. Portfolio Value", f"${(dff['Cost_per_Billet'].sum()/1e6):.1f}M")
 
-    # Row 1: Primary Metrics
+    st.markdown("--- ")
+
+    # Core Analysis Section
+    st.subheader("Core Analysis: Cost, Criticality & Gaps")
     col1, col2 = st.columns(2)
     with col1:
         fig1 = px.scatter(dff, x='Cost_per_Billet', y='Model_Criticality_Score', color='Personnel_Type',
@@ -101,27 +106,29 @@ if df is not None:
         fig2 = px.bar(avg_cost, x='BSO', y='Cost_per_Billet', title="Average Cost per Billet by BSO", color='BSO')
         st.plotly_chart(fig2, use_container_width=True)
 
-    # Row 2: Regression and Variance
-    col3, col4 = st.columns(2)
-    with col3:
-        fig3 = px.scatter(dff, x='Gap_Size', y='Model_Criticality_Score', trendline="ols",
-                          title="Personnel Gap vs. Criticality (Regression Analysis)")
-        st.plotly_chart(fig3, use_container_width=True)
-    with col4:
-        fig4 = px.box(dff, x='BSO', y='Cost_per_Billet', color='BSO', title="Cost Variance Analysis by BSO")
-        st.plotly_chart(fig4, use_container_width=True)
+    # Detailed Analysis Section (using expanders)
+    st.markdown("--- ")
+    with st.expander("Detailed Gap & Cost Variance Analysis"): # Group related plots
+        col3, col4 = st.columns(2)
+        with col3:
+            fig3 = px.scatter(dff, x='Gap_Size', y='Model_Criticality_Score', trendline="ols",
+                              title="Personnel Gap vs. Criticality (Regression Analysis)")
+            st.plotly_chart(fig3, use_container_width=True)
+        with col4:
+            fig4 = px.box(dff, x='BSO', y='Cost_per_Billet', color='BSO', title="Cost Variance Analysis by BSO")
+            st.plotly_chart(fig4, use_container_width=True)
 
-    # Row 3: Specialty Analysis
-    col5, col6 = st.columns(2)
-    with col5:
-        spec_data = dff.groupby('Job_Specialty')['Model_Criticality_Score'].mean().reset_index().sort_values('Model_Criticality_Score', ascending=False).head(15)
-        fig5 = px.bar(spec_data, x='Job_Specialty', y='Model_Criticality_Score', title="Top 15 Most Critical Job Specialties")
-        st.plotly_chart(fig5, use_container_width=True)
-    with col6:
-        heat = dff.groupby(['BSO', 'Job_Specialty'])['Model_Criticality_Score'].mean().reset_index()
-        fig6 = go.Figure(data=go.Heatmap(z=heat['Model_Criticality_Score'], x=heat['BSO'], y=heat['Job_Specialty'], colorscale='Viridis'))
-        fig6.update_layout(title="Criticality Density Heatmap (BSO vs Specialty)")
-        st.plotly_chart(fig6, use_container_width=True)
+    with st.expander("Job Specialty & Criticality Deep Dive"): # Group related plots
+        col5, col6 = st.columns(2)
+        with col5:
+            spec_data = dff.groupby('Job_Specialty')['Model_Criticality_Score'].mean().reset_index().sort_values('Model_Criticality_Score', ascending=False).head(15)
+            fig5 = px.bar(spec_data, x='Job_Specialty', y='Model_Criticality_Score', title="Top 15 Most Critical Job Specialties")
+            st.plotly_chart(fig5, use_container_width=True)
+        with col6:
+            heat = dff.groupby(['BSO', 'Job_Specialty'])['Model_Criticality_Score'].mean().reset_index()
+            fig6 = go.Figure(data=go.Heatmap(z=heat['Model_Criticality_Score'], x=heat['BSO'], y=heat['Job_Specialty'], colorscale='Viridis'))
+            fig6.update_layout(title="Criticality Density Heatmap (BSO vs Specialty)")
+            st.plotly_chart(fig6, use_container_width=True)
 
     # Export Feature
     csv = dff.to_csv(index=False).encode('utf-8')
