@@ -5,8 +5,7 @@ import os
 base_path = os.path.dirname(__file__)
 csv_candidates = [
     'clean_mcs.csv',
-    'CLEANED_JOINED_MODEL CRIT SCORE_DATA.csv',
-    'CLEANED_JOINED_MODEL CRIT SCORE_DATA.csv.csv',
+    'CLEANED_JOINED_MODEL CRIT SCORE_DATA.csv'
 ]
 csv_path = next(
     (os.path.join(base_path, fname) for fname in csv_candidates if os.path.exists(os.path.join(base_path, fname))),
