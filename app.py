@@ -6,7 +6,7 @@ import os
 from sklearn.linear_model import LinearRegression
 
 # Page Config for Professional Dashboard Look
-st.set_page_config(page_title="Strategic Manpower Optimization Module Dashboard", layout="wide")
+st.set_page_config(page_title="Strategic Manpower Optimization Module", layout="wide")
 
 @st.cache_data
 def load_and_clean_data():
@@ -109,7 +109,7 @@ if df is not None:
     col5, col6 = st.columns(2)
     with col5:
         spec_data = dff.groupby('Job_Specialty')['Model_Criticality_Score'].mean().reset_index().sort_values('Model_Criticality_Score', ascending=False).head(15)
-        fig5 = px.bar(spec_data, x='Job_Specialty', y='Model_Criticality_Score', title="Top 15 Most Critical Job Specialties")
+        fig5 = px.bar(spec_data, x='Job_Specialty', y='Model_Criticality_Score', title="Most Critical Job Specialties")
         st.plotly_chart(fig5, use_container_width=True)
     with col6:
         heat = dff.groupby(['BSO', 'Job_Specialty'])['Model_Criticality_Score'].mean().reset_index()
