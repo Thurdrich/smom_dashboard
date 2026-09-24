@@ -1,149 +1,440 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import os
-from sklearn.linear_model import LinearRegression
+from pathlib import Path
 
-# Page Config for Professional Dashboard Look
-st.set_page_config(page_title="Strategic Manpower Optimization Module", layout="wide")
+st.set_page_config(page_title="Epic Fury Movement Tracker", page_icon="🚢", layout="wide")
+
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background: linear-gradient(180deg, #071a2f 0%, #0d2748 100%);
+        color: #edf6ff;
+    }
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    [data-testid="stSidebar"] {
+        background: rgba(12, 31, 52, 0.9);
+    }
+    div[data-testid="stMetric"] {
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.08);
+        padding: 0.8rem 1rem;
+        border-radius: 0.75rem;
+    }
+    h1, h2, h3 {
+        color: #f0f7ff;
+    }
+    .stDataFrame {
+        background: rgba(255,255,255,0.02);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 @st.cache_data
-def load_and_clean_data():
-    # Prefer the newly attached Epic Fury dataset while keeping the legacy filenames available.
-    file_names = [
-        'MSC Epic Fury Movement Tracker_N1.xlsx',
-        'MSC Epic Fury Movement Tracker_N1.csv',
-        'Epic Fury Data',
-        'clean_mcs.csv',
-        'CLEANED_JOINED_MODEL CRIT SCORE_DATA.csv'
+def load_tracker_data():
+    base_dir = Path(__file__).resolve().parent
+    candidates = [
+        "MSC Epic Fury Movement Tracker_N1.xlsx",
+        "MSC Epic Fury Movement Tracker_N1.csv",
+        "Epic Fury Data",
+        "clean_mcs.csv",
+        "CLEANED_JOINED_MODEL CRIT SCORE_DATA.csv",
     ]
 
-    file_path = next((name for name in file_names if os.path.exists(name)), None)
+    file_path = None
+    for candidate in candidates:
+        p = base_dir / candidate
+        if p.exists():
+            file_path = p
+            break
+
     if file_path is None:
         return None
 
-    if file_path.lower().endswith('.xlsx'):
+    if file_path.suffix.lower() == ".xlsx":
         df = pd.read_excel(file_path)
     else:
         df = pd.read_csv(file_path)
 
-    # Legacy dashboard compatibility: compute a small set of fields used by the charts.
-    if 'Pay_Grade_Level' in df.columns:
-        cost_map = {
-            'E1': 50000, 'E2': 55000, 'E3': 60000, 'E4': 70000, 'E5': 85000, 'E6': 100000, 'E7': 120000, 'E8': 140000, 'E9': 160000,
-            'GS-07': 70000, 'GS-09': 85000, 'GS-11': 100000, 'GS-12': 120000, 'GS-13': 140000, 'GS-14': 160000, 'GS-15': 180000
-        }
-        df['Cost_per_Billet'] = df['Pay_Grade_Level'].map(cost_map)
+    df.columns = [str(col).strip() for col in df.columns]
 
-    if 'Cost_per_Billet' in df.columns:
-        df = df.dropna(subset=['Cost_per_Billet'])
+    # Standardize a few common field names for compatibility with legacy files.
+    rename_map = {
+        "CIVMAR/PER": "CIVMAR_PER",
+        "CIVMAR IN/OUT": "CIVMAR_IN_OUT",
+        "COMMENTS & ACTIONS": "COMMENTS_ACTIONS",
+        "DUE OFF DT": "DUE_OFF_DT",
+        "LILP SHP": "LILP_SHP",
+        "LILP DATE": "LILP_DATE",
+        "EXT STATUS": "EXT_STATUS",
+        "IN/OUT": "IN_OUT",
+        "DOA": "DOA",
+        "O/D": "OD",
+        "STATUS": "STATUS",
+        "LOCATION": "LOCATION",
+        "VESSEL": "VESSEL",
+        "SEX": "SEX",
+        "RATING": "RATING",
+        "START": "START",
+        "LEG 1": "LEG_1",
+        "DATE 1": "DATE_1",
+        "LEG 2": "LEG_2",
+        "DATE 2": "DATE_2",
+        "Personnel_Type": "Personnel_Type",
+        "BSO": "BSO",
+        "Platform": "Platform",
+        "Job_Specialty": "Job_Specialty",
+    }
+    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
-    if 'Gap' in df.columns:
-        df['Gap_Size'] = df['Gap'].abs()
+    for col in ["STATUS", "EXT_STATUS", "LOCATION", "VESSEL", "SEX", "RATING", "START", "IN_OUT"]:
+        if col in df.columns:
+            df[col] = df[col].fillna("Unknown").astype(str).str.strip()
+
+    for col in ["DATE_1", "DATE_2", "DOA", "DUE_OFF_DT", "LILP_DATE"]:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+
+    if "STATUS" in df.columns:
+        df["STATUS"] = df["STATUS"].str.upper().replace({"N/A": "UNKNOWN", "nan": "UNKNOWN"})
+
+    if "OD" in df.columns:
+        df["OD"] = pd.to_numeric(df["OD"], errors="coerce")
 
     return df
 
-df = load_and_clean_data()
 
-if df is not None:
-    st.title("Strategic Manpower Optimization Module Dashboard")
-    st.markdown("--- ")
+try:
+    df = load_tracker_data()
+except Exception:
+    df = None
 
-    st.sidebar.header("Dashboard Filters")
+if df is None:
+    st.error("No supported dataset file was found. Add 'MSC Epic Fury Movement Tracker_N1.csv' or the original CSV/XLSX to this folder.")
+    st.stop()
 
-    if 'Personnel_Type' in df.columns:
-        personnel_types = ['All'] + sorted(df['Personnel_Type'].dropna().unique().tolist())
-        selected_personnel = st.sidebar.selectbox("Select Personnel Category", personnel_types)
-    else:
-        selected_personnel = 'All'
+# Sidebar filters
+with st.sidebar:
+    st.header("Filters")
 
-    if 'Platform' in df.columns:
-        platform_types = ['All'] + sorted(df['Platform'].dropna().unique().tolist())
-        selected_platform = st.sidebar.selectbox("Select Platform", platform_types)
-    else:
-        selected_platform = 'All'
+    status_options = ["All"] + sorted(
+        pd.Series(df["STATUS"].dropna().astype(str).str.upper().unique()).tolist(),
+        key=lambda x: str(x),
+    ) if "STATUS" in df.columns else ["All"]
+    selected_status = st.selectbox("Status", status_options)
 
-    if 'BSO' in df.columns:
-        bso_types = ['All'] + sorted(df['BSO'].dropna().unique().tolist())
-        selected_bso = st.sidebar.selectbox("Select BSO", bso_types)
-    else:
-        selected_bso = 'All'
+    location_options = ["All"] + sorted(
+        pd.Series(df["LOCATION"].dropna().astype(str).str.upper().unique()).tolist(),
+        key=lambda x: str(x),
+    ) if "LOCATION" in df.columns else ["All"]
+    selected_location = st.selectbox("Location", location_options)
 
-    if 'Cost_per_Billet' in df.columns:
-        min_cost, max_cost = int(df['Cost_per_Billet'].min()), int(df['Cost_per_Billet'].max())
-        cost_range = st.sidebar.slider(
-            "Select Cost per Billet Range ($)",
-            min_value=min_cost,
-            max_value=max_cost,
-            value=(min_cost, max_cost)
-        )
-    else:
-        cost_range = (0, 0)
+    vessel_options = ["All"] + sorted(
+        pd.Series(df["VESSEL"].dropna().astype(str).str.upper().unique()).tolist(),
+        key=lambda x: str(x),
+    ) if "VESSEL" in df.columns else ["All"]
+    selected_vessel = st.selectbox("Vessel", vessel_options)
 
-    if 'Model_Criticality_Score' in df.columns:
-        min_crit, max_crit = int(df['Model_Criticality_Score'].min()), int(df['Model_Criticality_Score'].max())
-        criticality_range = st.sidebar.slider(
-            "Select Model Criticality Score Range",
-            min_value=min_crit,
-            max_value=max_crit,
-            value=(min_crit, max_crit)
-        )
-    else:
-        criticality_range = (0, 0)
+    sex_options = ["All"] + sorted(
+        pd.Series(df["SEX"].dropna().astype(str).str.upper().unique()).tolist(),
+        key=lambda x: str(x),
+    ) if "SEX" in df.columns else ["All"]
+    selected_sex = st.selectbox("Sex", sex_options)
 
-    dff = df.copy()
-    if selected_personnel != 'All' and 'Personnel_Type' in dff.columns:
-        dff = dff[dff['Personnel_Type'] == selected_personnel]
-    if selected_platform != 'All' and 'Platform' in dff.columns:
-        dff = dff[dff['Platform'] == selected_platform]
-    if selected_bso != 'All' and 'BSO' in dff.columns:
-        dff = dff[dff['BSO'] == selected_bso]
+    st.markdown("---")
+    st.caption("Epic Fury dashboard")
 
-    if 'Cost_per_Billet' in dff.columns:
-        dff = dff[(dff['Cost_per_Billet'] >= cost_range[0]) & (dff['Cost_per_Billet'] <= cost_range[1])]
-    if 'Model_Criticality_Score' in dff.columns:
-        dff = dff[(dff['Model_Criticality_Score'] >= criticality_range[0]) & (dff['Model_Criticality_Score'] <= criticality_range[1])]
+# Filter data
+filtered = df.copy()
+if selected_status != "All" and "STATUS" in filtered.columns:
+    filtered = filtered[filtered["STATUS"].astype(str).str.upper() == selected_status]
+if selected_location != "All" and "LOCATION" in filtered.columns:
+    filtered = filtered[filtered["LOCATION"].astype(str).str.upper() == selected_location]
+if selected_vessel != "All" and "VESSEL" in filtered.columns:
+    filtered = filtered[filtered["VESSEL"].astype(str).str.upper() == selected_vessel]
+if selected_sex != "All" and "SEX" in filtered.columns:
+    filtered = filtered[filtered["SEX"].astype(str).str.upper() == selected_sex]
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if {'Cost_per_Billet', 'Model_Criticality_Score'}.issubset(dff.columns):
-            fig1 = px.scatter(dff, x='Cost_per_Billet', y='Model_Criticality_Score', color='Personnel_Type' if 'Personnel_Type' in dff.columns else None,
-                              size='Gap_Size' if 'Gap_Size' in dff.columns else None, hover_data=['BSO', 'Job_Specialty'] if {'BSO', 'Job_Specialty'}.issubset(dff.columns) else None,
-                              title="Cost vs. Criticality Score")
-            st.plotly_chart(fig1, use_container_width=True)
-    with col2:
-        if 'BSO' in dff.columns and 'Cost_per_Billet' in dff.columns:
-            avg_cost = dff.groupby('BSO')['Cost_per_Billet'].mean().reset_index().sort_values('Cost_per_Billet', ascending=False)
-            fig2 = px.bar(avg_cost, x='BSO', y='Cost_per_Billet', title="Average Cost per Billet by BSO", color='BSO')
-            st.plotly_chart(fig2, use_container_width=True)
+# KPI summary
+status_counts = filtered["STATUS"].astype(str).str.upper().value_counts() if "STATUS" in filtered.columns else pd.Series(dtype=int)
 
-    col3, col4 = st.columns(2)
-    with col3:
-        if {'Gap_Size', 'Model_Criticality_Score'}.issubset(dff.columns):
-            fig3 = px.scatter(dff, x='Gap_Size', y='Model_Criticality_Score', trendline="ols",
-                              title="Personnel Gap vs. Criticality (Regression Analysis)")
-            st.plotly_chart(fig3, use_container_width=True)
-    with col4:
-        if 'BSO' in dff.columns and 'Cost_per_Billet' in dff.columns:
-            fig4 = px.box(dff, x='BSO', y='Cost_per_Billet', color='BSO', title="Cost Variance Analysis by BSO")
-            st.plotly_chart(fig4, use_container_width=True)
+summary = {
+    "Total": len(filtered),
+    "On Location": int(status_counts.get("ON LOCATION", 0)),
+    "Pending": int(status_counts.get("PENDING", 0)),
+    "Travel Confirmed": int(status_counts.get("TRAVEL CONFIRMED", 0)),
+    "Cancelled": int(status_counts.get("CANCELLED", 0)),
+    "No Show": int(status_counts.get("NO SHOW", 0)),
+}
 
-    col5, col6 = st.columns(2)
-    with col5:
-        if 'Job_Specialty' in dff.columns and 'Model_Criticality_Score' in dff.columns:
-            spec_data = dff.groupby('Job_Specialty')['Model_Criticality_Score'].mean().reset_index().sort_values('Model_Criticality_Score', ascending=False).head(15)
-            fig5 = px.bar(spec_data, x='Job_Specialty', y='Model_Criticality_Score', title="Most Critical Job Specialties")
-            st.plotly_chart(fig5, use_container_width=True)
-    with col6:
-        if {'BSO', 'Job_Specialty', 'Model_Criticality_Score'}.issubset(dff.columns):
-            heat = dff.groupby(['BSO', 'Job_Specialty'])['Model_Criticality_Score'].mean().reset_index()
-            fig6 = go.Figure(data=go.Heatmap(z=heat['Model_Criticality_Score'], x=heat['BSO'], y=heat['Job_Specialty'], colorscale='Viridis'))
-            fig6.update_layout(title="Criticality Density Heatmap (BSO vs Specialty)")
-            st.plotly_chart(fig6, use_container_width=True)
+st.title("Epic Fury Movement Tracker")
+st.caption("Live personnel movement, travel status, and duty tracker")
 
-    csv = dff.to_csv(index=False).encode('utf-8')
-    st.sidebar.download_button(label="Download Filtered Data (CSV)", data=csv,
-                               file_name=f'filtered_data_{selected_personnel.lower()}_{selected_platform.lower()}_{selected_bso.lower()}.csv', mime='text/csv')
+cols = st.columns(6)
+for i, (label, value) in enumerate(summary.items()):
+    cols[i].metric(label, value)
+
+st.markdown("---")
+
+# Charts
+left, right = st.columns(2)
+
+if "STATUS" in filtered.columns:
+    status_df = filtered["STATUS"].astype(str).str.upper().value_counts().reset_index()
+    status_df.columns = ["Status", "Count"]
+    fig = px.bar(status_df, x="Status", y="Count", color="Status", title="Movement status by count")
+    fig.update_layout(showlegend=False, template="plotly_dark")
+    left.plotly_chart(fig, use_container_width=True)
+
+if "LOCATION" in filtered.columns:
+    loc_df = filtered["LOCATION"].fillna("Unknown").astype(str).str.upper().value_counts().head(10).reset_index()
+    loc_df.columns = ["Location", "Count"]
+    fig2 = px.bar(loc_df, x="Count", y="Location", orientation="h", color="Location", title="Top locations")
+    fig2.update_layout(showlegend=False, template="plotly_dark")
+    right.plotly_chart(fig2, use_container_width=True)
+
+if "VESSEL" in filtered.columns:
+    vessel_df = filtered["VESSEL"].fillna("Unknown").astype(str).str.upper().value_counts().head(10).reset_index()
+    vessel_df.columns = ["Vessel", "Count"]
+    fig3 = px.pie(vessel_df, names="Vessel", values="Count", title="Assignments by vessel")
+    fig3.update_layout(template="plotly_dark")
+    left.plotly_chart(fig3, use_container_width=True)
+
+if "RATING" in filtered.columns:
+    rating_df = filtered["RATING"].fillna("Unknown").astype(str).str.upper().value_counts().head(12).reset_index()
+    rating_df.columns = ["Rating", "Count"]
+    fig4 = px.bar(rating_df, x="Rating", y="Count", title="Personnel by rating")
+    fig4.update_layout(template="plotly_dark")
+    right.plotly_chart(fig4, use_container_width=True)
+
+st.markdown("---")
+
+# Data table
+st.subheader("Roster / movement detail")
+
+preferred_cols = [
+    c for c in [
+        "STATUS",
+        "EXT_STATUS",
+        "SEX",
+        "CIVMAR_PER",
+        "RATING",
+        "VESSEL",
+        "LOCATION",
+        "START",
+        "IN_OUT",
+        "DOA",
+        "DUE_OFF_DT",
+        "OD",
+        "COMMENTS_ACTIONS",
+    ] if c in filtered.columns
+]
+
+if preferred_cols:
+    display = filtered[preferred_cols].copy()
+    for col in ["DOA", "DUE_OFF_DT"]:
+        if col in display.columns:
+            display[col] = display[col].dt.strftime("%Y-%m-%d")
+    st.dataframe(display.head(250), use_container_width=True, hide_index=True)
 else:
-    st.error("Error: no supported dataset file was found. Please add 'MSC Epic Fury Movement Tracker_N1.csv' or the legacy CSV file to this folder.")
+    st.dataframe(filtered.head(250), use_container_width=True, hide_index=True)
+
+csv_data = filtered.to_csv(index=False).encode("utf-8")
+st.download_button("Download filtered dataset", csv_data, file_name="epic_fury_filtered.csv", mime="text/csv")
+
+""" 
+{"path":"main.py","ref":"main","repo":"Thurdrich/smom_dashboard"} """:
+    pass
+
+
+# keep a minimal script-friendly loader for local execution and direct imports
+if __name__ == "__main__":
+    pass
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
