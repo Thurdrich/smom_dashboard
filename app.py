@@ -1,312 +1,138 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
 import os
 from pathlib import Path
 
-st.set_page_config(page_title="Epic Fury Movement Tracker", page_icon="🚢", layout="wide")
+import pandas as pd
+import plotly.express as px
+import streamlit as st
 
-st.markdown(
-    """
-    <style>
-    .stApp {
-        background: linear-gradient(180deg, #071a2f 0%, #0d2748 100%);
-        color: #edf6ff;
-    }
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-    [data-testid="stSidebar"] {
-        background: rgba(12, 31, 52, 0.9);
-    }
-    div[data-testid="stMetric"] {
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.08);
-        padding: 0.8rem 1rem;
-        border-radius: 0.8rem;
-    }
-    h1, h2, h3, h4 {
-        color: #f0f7ff;
-    }
-    .stDataFrame {
-        background: rgba(255,255,255,0.02);
-    }
-    .stTabs [role="tablist"] {
-        gap: 0.5rem;
-    }
-    .stTabs [role="tab"] {
-        background: rgba(255,255,255,0.04);
-        border-radius: 0.5rem;
-        color: #dfeeff;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.set_page_config(page_title="Epic Fury | Movement Command Center", page_icon="⚓", layout="wide", initial_sidebar_state="expanded")
 
+st.markdown("""
+<style>
+:root { --navy:#071a2f; --panel:#102d4b; --muted:#9fb5cc; --cyan:#39c6d8; }
+.stApp { background: radial-gradient(circle at top right,#123d61 0,#071a2f 42%,#061322 100%); color:#edf6ff; }
+.block-container { max-width: 1500px; padding-top: 1.5rem; }
+[data-testid="stSidebar"] { background: rgba(5,18,34,.96); border-right:1px solid rgba(255,255,255,.08); }
+[data-testid="stMetric"] { background:linear-gradient(145deg,rgba(31,76,111,.72),rgba(10,32,55,.9)); border:1px solid rgba(115,192,224,.18); border-radius:14px; padding:14px; }
+[data-testid="stMetricLabel"] { color:#a9c2d8; } [data-testid="stMetricValue"] { color:#fff; }
+[data-testid="stChatMessage"] { border:1px solid rgba(122,190,220,.16); border-radius:14px; background:rgba(13,43,70,.56); }
+[data-testid="stDataFrame"] { border:1px solid rgba(122,190,220,.16); border-radius:12px; }
+hr { border-color:rgba(255,255,255,.12); }
+</style>
+""", unsafe_allow_html=True)
+
+STATUS_COLORS = {"ON LOCATION":"#27ae60","PENDING":"#f39c12","TRAVEL CONFIRMED":"#2980b9","CANCELLED":"#c0392b","NO SHOW":"#8e44ad","IN TRANSIT":"#00a6b2","ARRIVAL PENDING":"#e67e22","STS TRANSIT":"#008c9e","FY27 LOA NEEDED":"#795548"}
 
 @st.cache_data
-def load_tracker_data():
-    base_dir = Path(__file__).resolve().parent
-    candidates = [
-        "MSC Epic Fury Movement Tracker_N1.xlsx",
-        "MSC Epic Fury Movement Tracker_N1.csv",
-        "Epic Fury Data",
-        "clean_mcs.csv",
-        "CLEANED_JOINED_MODEL CRIT SCORE_DATA.csv",
-    ]
+def load_data():
+    base = Path(__file__).resolve().parent
+    candidates = ["MSC Epic Fury Movement Tracker_N1.xlsx", "MSC Epic Fury Movement Tracker_N1.csv", "Epic Fury Data", "clean_mcs.csv", "CLEANED_JOINED_MODEL CRIT SCORE_DATA.csv"]
+    path = next((base / name for name in candidates if (base / name).exists()), None)
+    if path is None: return None
+    data = pd.read_excel(path) if path.suffix.lower() == ".xlsx" else pd.read_csv(path)
+    data.columns = [str(c).strip() for c in data.columns]
+    data = data.rename(columns={"CIVMAR/PER":"PERSON", "EXT STATUS":"EXT_STATUS", "IN/OUT":"IN_OUT", "DATE 1":"DATE_1", "DATE 2":"DATE_2", "COMMENTS & ACTIONS":"COMMENTS"})
+    for col in data.columns:
+        if data[col].dtype == "object": data[col] = data[col].fillna("Unknown").astype(str).str.strip()
+    for col in ["DATE_1","DATE_2","DOA","DUE OFF DT","LILP DATE"]:
+        if col in data: data[col] = pd.to_datetime(data[col], errors="coerce")
+    if "STATUS" in data: data["STATUS"] = data["STATUS"].astype(str).str.upper().replace({"NAN":"UNKNOWN","NONE":"UNKNOWN"})
+    return data
 
-    for name in candidates:
-        candidate = base_dir / name
-        if candidate.exists():
-            file_path = candidate
-            break
-    else:
-        return None
+def text_col(data, col):
+    return data[col].fillna("Unknown").astype(str).str.upper() if col in data else pd.Series("Unknown", index=data.index)
 
-    if file_path.suffix.lower() == ".xlsx":
-        df = pd.read_excel(file_path)
-    else:
-        df = pd.read_csv(file_path)
+def apply_filters(data):
+    with st.sidebar:
+        st.header("Mission filters")
+        search = st.text_input("Search personnel", placeholder="Last name or full name")
+        def choose(label, col):
+            vals = sorted(text_col(data, col).unique().tolist()) if col in data else []
+            return st.selectbox(label, ["ALL"] + vals)
+        status = choose("Status", "STATUS"); location = choose("Location", "LOCATION"); vessel = choose("Vessel", "VESSEL")
+        sex = choose("Sex", "SEX")
+        st.divider(); st.caption("Filters apply to charts, KPIs, roster, and chatbot context.")
+    result = data.copy()
+    if search:
+        result = result[text_col(result,"PERSON").str.contains(search.upper(), na=False)] if "PERSON" in result else result
+    for col, value in [("STATUS",status),("LOCATION",location),("VESSEL",vessel),("SEX",sex)]:
+        if value != "ALL" and col in result: result = result[text_col(result,col) == value]
+    return result
 
-    df.columns = [str(col).strip() for col in df.columns]
+def answer_question(question, data):
+    q = question.lower().strip(); status = text_col(data,"STATUS"); total = len(data)
+    if not q: return "Ask me about counts, statuses, locations, vessels, ratings, due-off dates, or a person's record."
+    if any(word in q for word in ["how many", "count", "total"]):
+        for key in sorted(status.unique(), key=len, reverse=True):
+            if key.lower() in q: return f"There are **{int((status == key).sum())}** records with status **{key}** in the current filtered view."
+        if "location" in q and "LOCATION" in data: return "Locations: " + ", ".join(f"**{k}** ({v})" for k,v in text_col(data,"LOCATION").value_counts().head(8).items())
+        return f"The current filtered view contains **{total}** personnel records."
+    if "status" in q or "breakdown" in q: return "Status breakdown: " + ", ".join(f"**{k}** ({v})" for k,v in status.value_counts().items())
+    if "location" in q and "LOCATION" in data: return "Top locations: " + ", ".join(f"**{k}** ({v})" for k,v in text_col(data,"LOCATION").value_counts().head(8).items())
+    if "vessel" in q and "VESSEL" in data: return "Top vessels: " + ", ".join(f"**{k}** ({v})" for k,v in text_col(data,"VESSEL").value_counts().head(8).items())
+    if "no show" in q: return f"There are **{int((status == 'NO SHOW').sum())}** no-show records in the current filtered view."
+    if "pending" in q: return f"There are **{int((status == 'PENDING').sum())}** pending records in the current filtered view."
+    if "travel confirmed" in q: return f"There are **{int((status == 'TRAVEL CONFIRMED').sum())}** travel-confirmed records in the current filtered view."
+    if "due off" in q or "due-off" in q:
+        col = "DUE OFF DT" if "DUE OFF DT" in data else None
+        if col: return f"**{int(data[col].notna().sum())}** filtered records have a due-off date."
+    if "PERSON" in data:
+        matches = data[text_col(data,"PERSON").str.contains(q.upper(), na=False)]
+        if len(matches):
+            row = matches.iloc[0]; return f"I found **{row['PERSON']}** — status: **{row.get('STATUS','Unknown')}**, location: **{row.get('LOCATION','Unknown')}**, vessel: **{row.get('VESSEL','Unknown')}**."
+    return "I can answer questions using the records currently shown. Try: *How many are pending?*, *Where are personnel located?*, or search a person's name."
 
-    rename_map = {
-        "CIVMAR/PER": "CIVMAR_PER",
-        "CIVMAR IN/OUT": "CIVMAR_IN_OUT",
-        "COMMENTS & ACTIONS": "COMMENTS_ACTIONS",
-        "DUE OFF DT": "DUE_OFF_DT",
-        "LILP SHP": "LILP_SHP",
-        "LILP DATE": "LILP_DATE",
-        "EXT STATUS": "EXT_STATUS",
-        "IN/OUT": "IN_OUT",
-        "O/D": "OD",
-        "DOA": "DOA",
-        "STATUS": "STATUS",
-        "LOCATION": "LOCATION",
-        "VESSEL": "VESSEL",
-        "SEX": "SEX",
-        "RATING": "RATING",
-        "START": "START",
-        "LEG 1": "LEG_1",
-        "DATE 1": "DATE_1",
-        "LEG 2": "LEG_2",
-        "DATE 2": "DATE_2",
-        "Personnel_Type": "Personnel_Type",
-        "BSO": "BSO",
-        "Platform": "Platform",
-        "Job_Specialty": "Job_Specialty",
-    }
-    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
-
-    for col in ["STATUS", "EXT_STATUS", "LOCATION", "VESSEL", "SEX", "RATING", "START", "IN_OUT", "CIVMAR_PER"]:
-        if col in df.columns:
-            df[col] = df[col].fillna("Unknown").astype(str).str.strip()
-
-    for col in ["DATE_1", "DATE_2", "DOA", "DUE_OFF_DT", "LILP_DATE"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce")
-
-    if "STATUS" in df.columns:
-        df["STATUS"] = df["STATUS"].str.upper().replace({"N/A": "UNKNOWN", "NAN": "UNKNOWN", "NONE": "UNKNOWN"})
-
-    if "OD" in df.columns:
-        df["OD"] = pd.to_numeric(df["OD"], errors="coerce")
-
-    return df
-
-
-def clean_text(series):
-    if series is None:
-        return pd.Series(dtype=str)
-    return series.fillna("Unknown").astype(str).str.strip().str.upper()
-
-
-def status_badge_color(status):
-    status_map = {
-        "ON LOCATION": "#2ecc71",
-        "PENDING": "#f39c12",
-        "TRAVEL CONFIRMED": "#3498db",
-        "CANCELLED": "#e74c3c",
-        "NO SHOW": "#9b59b6",
-        "IN TRANSIT": "#00bcd4",
-        "STS TRANSIT": "#00acc1",
-        "ARRIVAL PENDING": "#ff9800",
-        "FY27 LOA NEEDED": "#8d6e63",
-    }
-    return status_map.get(str(status).upper(), "#95a5a6")
-
-
-try:
-    df = load_tracker_data()
-except Exception:
-    df = None
-
+df = load_data()
 if df is None:
-    st.error("No supported dataset file was found. Add 'MSC Epic Fury Movement Tracker_N1.csv' or the original CSV/XLSX to this folder.")
-    st.stop()
+    st.error("No supported dataset found. Add the Epic Fury CSV or XLSX to the repository root."); st.stop()
+filtered = apply_filters(df)
+status = text_col(filtered,"STATUS")
+counts = status.value_counts()
 
-# Sidebar filters
-with st.sidebar:
-    st.header("Filters")
-
-    search = st.text_input("Search name", placeholder="e.g. Smith, John")
-
-    status_values = ["All"] + sorted(
-        clean_text(df["STATUS"]).dropna().unique().tolist(), key=lambda x: str(x)
-    ) if "STATUS" in df.columns else ["All"]
-    selected_status = st.selectbox("Status", status_values)
-
-    location_values = ["All"] + sorted(
-        clean_text(df["LOCATION"]).dropna().unique().tolist(), key=lambda x: str(x)
-    ) if "LOCATION" in df.columns else ["All"]
-    selected_location = st.selectbox("Location", location_values)
-
-    vessel_values = ["All"] + sorted(
-        clean_text(df["VESSEL"]).dropna().unique().tolist(), key=lambda x: str(x)
-    ) if "VESSEL" in df.columns else ["All"]
-    selected_vessel = st.selectbox("Vessel", vessel_values)
-
-    sex_values = ["All"] + sorted(
-        clean_text(df["SEX"]).dropna().unique().tolist(), key=lambda x: str(x)
-    ) if "SEX" in df.columns else ["All"]
-    selected_sex = st.selectbox("Sex", sex_values)
-
-    st.markdown("---")
-    st.caption("Epic Fury dashboard")
-
-# Apply filters
-filtered = df.copy()
-if search:
-    name_cols = [c for c in ["CIVMAR_PER", "NAME", "PERSON", "EMPLOYEE"] if c in filtered.columns]
-    if name_cols:
-        q = search.strip().upper()
-        filtered = filtered[filtered[name_cols[0]].astype(str).str.upper().str.contains(q, na=False)]
-
-if selected_status != "All" and "STATUS" in filtered.columns:
-    filtered = filtered[filtered["STATUS"].astype(str).str.upper() == selected_status]
-if selected_location != "All" and "LOCATION" in filtered.columns:
-    filtered = filtered[filtered["LOCATION"].astype(str).str.upper() == selected_location]
-if selected_vessel != "All" and "VESSEL" in filtered.columns:
-    filtered = filtered[filtered["VESSEL"].astype(str).str.upper() == selected_vessel]
-if selected_sex != "All" and "SEX" in filtered.columns:
-    filtered = filtered[filtered["SEX"].astype(str).str.upper() == selected_sex]
-
-# Summary metrics
-status_series = clean_text(filtered["STATUS"]) if "STATUS" in filtered.columns else pd.Series(dtype=str)
-status_counts = status_series.value_counts()
-
-summary = {
-    "Total": len(filtered),
-    "On Location": int(status_counts.get("ON LOCATION", 0)),
-    "Pending": int(status_counts.get("PENDING", 0)),
-    "Travel Confirmed": int(status_counts.get("TRAVEL CONFIRMED", 0)),
-    "Cancelled": int(status_counts.get("CANCELLED", 0)),
-    "No Show": int(status_counts.get("NO SHOW", 0)),
-}
-
-st.title("Epic Fury Movement Tracker")
-st.caption("Personnel movement, travel status, and duty tracker")
-
+st.title("⚓ Epic Fury Movement Command Center")
+st.caption("Personnel movement, travel readiness, and operational accountability")
+metrics = [("FILTERED RECORDS",len(filtered)),("ON LOCATION",counts.get("ON LOCATION",0)),("PENDING",counts.get("PENDING",0)),("TRAVEL CONFIRMED",counts.get("TRAVEL CONFIRMED",0)),("NO SHOW",counts.get("NO SHOW",0)),("ATTENTION ITEMS",sum(counts.get(k,0) for k in ["NO SHOW","FLAGGED","FY27 LOA NEEDED"]))]
 cols = st.columns(6)
-for i, (label, value) in enumerate(summary.items()):
-    cols[i].metric(label, value)
+for col,(label,value) in zip(cols,metrics): col.metric(label,int(value))
 
-st.markdown("---")
+st.divider()
+chart_left, chart_right = st.columns(2)
+if len(filtered):
+    status_df = status.value_counts().rename_axis("Status").reset_index(name="Count")
+    fig = px.bar(status_df,x="Status",y="Count",color="Status",color_discrete_map=STATUS_COLORS,title="Movement status")
+    fig.update_layout(template="plotly_dark",paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",showlegend=False)
+    chart_left.plotly_chart(fig,use_container_width=True)
+    if "LOCATION" in filtered:
+        loc = text_col(filtered,"LOCATION").value_counts().head(10).rename_axis("Location").reset_index(name="Count")
+        fig2 = px.bar(loc,x="Count",y="Location",orientation="h",color="Count",color_continuous_scale="Blues",title="Top locations")
+        fig2.update_layout(template="plotly_dark",paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)")
+        chart_right.plotly_chart(fig2,use_container_width=True)
 
-# Charts
-left, right = st.columns(2)
-
-if "STATUS" in filtered.columns:
-    status_df = status_series.value_counts().reset_index()
-    status_df.columns = ["Status", "Count"]
-    fig = px.bar(
-        status_df,
-        x="Status",
-        y="Count",
-        color="Status",
-        title="Movement status by count",
-        color_discrete_map={v: status_badge_color(v) for v in status_df["Status"].tolist()},
-    )
-    fig.update_layout(showlegend=False, template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-    left.plotly_chart(fig, use_container_width=True)
-
-if "LOCATION" in filtered.columns:
-    loc_df = clean_text(filtered["LOCATION"]).value_counts().head(10).reset_index()
-    loc_df.columns = ["Location", "Count"]
-    fig2 = px.bar(
-        loc_df,
-        x="Count",
-        y="Location",
-        orientation="h",
-        color="Location",
-        title="Top locations",
-    )
-    fig2.update_layout(showlegend=False, template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-    right.plotly_chart(fig2, use_container_width=True)
-
-if "VESSEL" in filtered.columns:
-    vessel_df = clean_text(filtered["VESSEL"]).value_counts().head(10).reset_index()
-    vessel_df.columns = ["Vessel", "Count"]
-    fig3 = px.pie(vessel_df, names="Vessel", values="Count", title="Assignments by vessel")
-    fig3.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-    left.plotly_chart(fig3, use_container_width=True)
-
-if "RATING" in filtered.columns:
-    rating_df = clean_text(filtered["RATING"]).value_counts().head(12).reset_index()
-    rating_df.columns = ["Rating", "Count"]
-    fig4 = px.bar(rating_df, x="Rating", y="Count", title="Personnel by rating")
-    fig4.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-    right.plotly_chart(fig4, use_container_width=True)
-
-st.markdown("---")
-
-# Due-off check
-if "DUE_OFF_DT" in filtered.columns:
-    due_off = filtered["DUE_OFF_DT"].dropna()
-    if not due_off.empty:
-        st.subheader("Due-off watch")
-        due_soon = due_off[(due_off <= due_off.max())].head(10)
-        st.write(f"{len(due_off)} records with a due-off date are in the current filtered view.")
-
-# Roster table
-st.subheader("Roster / movement detail")
-preferred_cols = [
-    c for c in [
-        "STATUS",
-        "EXT_STATUS",
-        "SEX",
-        "CIVMAR_PER",
-        "RATING",
-        "VESSEL",
-        "LOCATION",
-        "START",
-        "IN_OUT",
-        "DOA",
-        "DUE_OFF_DT",
-        "OD",
-        "COMMENTS_ACTIONS",
-    ] if c in filtered.columns
-]
-
-display = filtered[preferred_cols].copy() if preferred_cols else filtered.copy()
-for col in ["DOA", "DUE_OFF_DT"]:
-    if col in display.columns:
-        display[col] = display[col].dt.strftime("%Y-%m-%d")
-
-# Colorize status column in display
-if "STATUS" in display.columns:
-    def style_status(v):
-        color = status_badge_color(v)
-        return f"background-color: {color}; color: white; border-radius: 6px; padding: 0.2rem 0.5rem; font-weight: 600;"
-    display["STATUS"] = display["STATUS"].apply(lambda v: f"<span style='{style_status(v)}'>{v}</span>")
-
-st.dataframe(display.head(250), use_container_width=True, hide_index=True, unsafe_allow_html=True)
-
-csv_data = filtered.to_csv(index=False).encode("utf-8")
-st.download_button("Download filtered dataset", csv_data, file_name="epic_fury_filtered.csv", mime="text/csv")
-
-# Keep a tiny local script hook
-if __name__ == "__main__":
-    pass
+st.divider()
+tab_roster, tab_timeline, tab_chat = st.tabs(["📋 Roster", "🗓️ Travel timeline", "💬 Ask the tracker"])
+with tab_roster:
+    st.subheader("Filtered movement roster")
+    cols = [c for c in ["STATUS","EXT_STATUS","PERSON","SEX","RATING","VESSEL","LOCATION","START","IN_OUT","DATE_1","DATE_2","DOA","DUE OFF DT","COMMENTS"] if c in filtered]
+    view = filtered[cols].copy() if cols else filtered.copy()
+    for col in view.columns:
+        if pd.api.types.is_datetime64_any_dtype(view[col]): view[col] = view[col].dt.strftime("%Y-%m-%d")
+    st.dataframe(view.head(500),use_container_width=True,hide_index=True)
+    st.download_button("Download filtered CSV",filtered.to_csv(index=False).encode("utf-8"),"epic_fury_filtered.csv","text/csv")
+with tab_timeline:
+    st.subheader("Upcoming / recorded travel dates")
+    date_col = "DATE_1" if "DATE_1" in filtered else ("DATE_2" if "DATE_2" in filtered else None)
+    if date_col and filtered[date_col].notna().any():
+        timeline = filtered.dropna(subset=[date_col]).sort_values(date_col).copy(); timeline["Date"] = timeline[date_col]
+        timeline["Person"] = timeline.get("PERSON", pd.Series("Record",index=timeline.index))
+        fig = px.scatter(timeline,x="Date",y="STATUS",color="STATUS",hover_name="Person",color_discrete_map=STATUS_COLORS,title="Movement activity by date")
+        fig.update_layout(template="plotly_dark",paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig,use_container_width=True)
+    else: st.info("No travel dates are available in the current filtered view.")
+with tab_chat:
+    st.subheader("Ask the Epic Fury tracker")
+    st.caption("This lightweight assistant answers from the currently filtered dataset; it does not send records to an external AI service.")
+    if "chat_history" not in st.session_state: st.session_state.chat_history = []
+    for role,message in st.session_state.chat_history: st.chat_message(role).markdown(message)
+    prompt = st.chat_input("Ask: How many are pending? Where are personnel located?")
+    if prompt:
+        st.session_state.chat_history.append(("user",prompt)); response = answer_question(prompt,filtered); st.session_state.chat_history.append(("assistant",response)); st.rerun()
