@@ -180,6 +180,18 @@ if not arrivals.empty:
     vessel_success = vessel_success.sort_values(
         ["Success rate (%)", "count"], ascending=[False, False]
     ).head(12)
+
+    location_success = (
+        filtered_arrivals.groupby("LOCATION", dropna=False)["SUCCESS"]
+        .agg(["mean", "count"])
+        .reset_index()
+    )
+    location_success["Success rate (%)"] = location_success["mean"] * 100
+    location_success = location_success.sort_values(
+        ["Success rate (%)", "count"], ascending=[False, False]
+    ).head(12)
+
+    vessel_col, location_col = st.columns(2)
     success_fig = px.bar(
         vessel_success,
         x="Success rate (%)",
@@ -196,7 +208,25 @@ if not arrivals.empty:
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
     )
-    st.plotly_chart(success_fig, use_container_width=True)
+    vessel_col.plotly_chart(success_fig, use_container_width=True)
+
+    location_fig = px.bar(
+        location_success,
+        x="Success rate (%)",
+        y="LOCATION",
+        orientation="h",
+        color="Success rate (%)",
+        color_continuous_scale="Tealgrn",
+        hover_data={"count": True, "mean": False},
+        title="Arrival success rate by location",
+    )
+    location_fig.update_xaxes(range=[0, 100])
+    location_fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+    location_col.plotly_chart(location_fig, use_container_width=True)
 
 if not model.empty:
     st.subheader("Manpower model")
