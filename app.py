@@ -48,6 +48,10 @@ def clean_columns(data):
         "DATE 1": "DATE_1", "DATE 2": "DATE_2", "COMMENTS & ACTIONS": "COMMENTS",
         "Personnel_Type": "PERSONNEL_TYPE", "Pay_Grade_Level": "PAY_GRADE_LEVEL",
         "Model_Criticality_Score": "CRITICALITY_SCORE",
+        # The manpower model uses mixed-case field names; normalize them to the
+        # canonical names consumed by clean_model and the dashboard charts.
+        "Platform": "PLATFORM", "Job_Specialty": "JOB_SPECIALTY",
+        "Onboard": "ONBOARD", "Gap": "GAP",
     }
     data = data.rename(columns=aliases)
     for column in data.columns:
