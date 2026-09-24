@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 BASE_DIR = Path(__file__).resolve().parent
-ARRIVAL_FILES = ["MEFMT_arrival_data (1).csv", "clean_mcs.csv", "MEFMT_data (1).xlsx"]
+ARRIVAL_FILES = ["MEFMT_arrival_data (1).csv", "clean_mcs.csv", "MEFMT_data (1).xlsx", "Epic Fury Data"]
 MODEL_FILES = ["CLEANED_JOINED_MODEL CRIT SCORE_DATA.csv"]
 
 st.markdown(
@@ -48,8 +48,6 @@ def clean_columns(data):
         "DATE 1": "DATE_1", "DATE 2": "DATE_2", "COMMENTS & ACTIONS": "COMMENTS",
         "Personnel_Type": "PERSONNEL_TYPE", "Pay_Grade_Level": "PAY_GRADE_LEVEL",
         "Model_Criticality_Score": "CRITICALITY_SCORE",
-        # The manpower model uses mixed-case field names; normalize them to the
-        # canonical names consumed by clean_model and the dashboard charts.
         "Platform": "PLATFORM", "Job_Specialty": "JOB_SPECIALTY",
         "Onboard": "ONBOARD", "Gap": "GAP",
     }
@@ -167,19 +165,38 @@ st.divider()
 
 if not arrivals.empty:
     st.subheader("Arrival operations")
-    left, right = st.columns(2)
     status_df = text_col(filtered_arrivals, "STATUS").value_counts().rename_axis("Status").reset_index(name="Count")
     status_fig = px.bar(status_df, x="Status", y="Count", color="Status", color_discrete_map=STATUS_COLORS, title="Arrival status")
     status_fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False)
-    left.plotly_chart(status_fig, use_container_width=True)
+    st.plotly_chart(status_fig, use_container_width=True)
 
-    vessel_success = filtered_arrivals.groupby("VESSEL", dropna=False)["SUCCESS"].agg(["mean", "count"]).reset_index()
+    st.subheader("Arrival analytics")
+    vessel_success = (
+        filtered_arrivals.groupby("VESSEL", dropna=False)["SUCCESS"]
+        .agg(["mean", "count"])
+        .reset_index()
+    )
     vessel_success["Success rate (%)"] = vessel_success["mean"] * 100
-    vessel_success = vessel_success.sort_values(["Success rate (%)", "count"], ascending=[False, False]).head(12)
-    success_fig = px.bar(vessel_success, x="VESSEL", y="Success rate (%)", color="Success rate (%)", color_continuous_scale="Viridis", title="Arrival success rate by vessel")
-    success_fig.update_yaxes(range=[0, 100])
-    success_fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-    right.plotly_chart(success_fig, use_container_width=True)
+    vessel_success = vessel_success.sort_values(
+        ["Success rate (%)", "count"], ascending=[False, False]
+    ).head(12)
+    success_fig = px.bar(
+        vessel_success,
+        x="Success rate (%)",
+        y="VESSEL",
+        orientation="h",
+        color="Success rate (%)",
+        color_continuous_scale="Viridis",
+        hover_data={"count": True, "mean": False},
+        title="Arrival success rate by vessel",
+    )
+    success_fig.update_xaxes(range=[0, 100])
+    success_fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(success_fig, use_container_width=True)
 
 if not model.empty:
     st.subheader("Manpower model")
