@@ -7,27 +7,15 @@ import plotly.express as px
 import streamlit as st
 
 st.set_page_config(
-    page_title="Epic Fury | Movement Command Center",
+    page_title="SMOM | Movement & Manpower Command Center",
     page_icon="⚓",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# The committed Excel workbook is the only permanent dashboard data source.
-SOURCE_FILE = "MEFMT_data (1).xlsx"
-STALE_AFTER_DAYS = 30
-REQUIRED_COLUMNS = {"STATUS", "SEX", "CIVMAR/PER", "VESSEL", "LOCATION"}
-DATE_COLUMNS = ["DATE_1", "DATE_2", "DOA", "DUE OFF DT", "LILP DATE"]
-STATUS_COLORS = {
-    "ON LOCATION": "#27ae60",
-    "PENDING": "#f39c12",
-    "TRAVEL CONFIRMED": "#2980b9",
-    "CANCELLED": "#c0392b",
-    "NO SHOW": "#8e44ad",
-    "IN TRANSIT": "#00a6b2",
-    "ARRIVAL PENDING": "#e67e22",
-    "STANDBY": "#8e44ad",
-}
+BASE_DIR = Path(__file__).resolve().parent
+ARRIVAL_FILES = ["MEFMT_arrival_data (1).csv", "clean_mcs.csv", "MEFMT_data (1).xlsx"]
+MODEL_FILES = ["CLEANED_JOINED_MODEL CRIT SCORE_DATA.csv"]
 
 st.markdown(
     """
@@ -41,297 +29,198 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
-def read_source(upload_bytes=None, upload_name=SOURCE_FILE):
-    if upload_bytes is not None:
-        stream = BytesIO(upload_bytes)
-        if upload_name.lower().endswith((".xlsx", ".xls")):
-            return pd.read_excel(stream), upload_name
-        return pd.read_csv(stream), upload_name
-
-    path = Path(__file__).resolve().parent / SOURCE_FILE
-    if not path.exists() or path.stat().st_size <= 1:
-        return None, SOURCE_FILE
-    return pd.read_excel(path), SOURCE_FILE
+STATUS_COLORS = {
+    "ON LOCATION": "#27ae60", "ARRIVED": "#27ae60", "PENDING": "#f39c12",
+    "TRAVEL CONFIRMED": "#2980b9", "CANCELLED": "#c0392b", "NO SHOW": "#8e44ad",
+    "IN TRANSIT": "#00a6b2", "STANDBY": "#8e44ad", "UNKNOWN": "#718096",
+}
 
 
-def clean_and_validate(data):
+def first_existing(names):
+    return next((BASE_DIR / name for name in names if (BASE_DIR / name).exists()), None)
+
+
+def clean_columns(data):
     data = data.copy()
-    data.columns = [str(column).strip() for column in data.columns]
-    missing = REQUIRED_COLUMNS - set(data.columns)
+    data.columns = [str(c).strip() for c in data.columns]
+    aliases = {
+        "CIVMAR/PER": "PERSON", "EXT STATUS": "EXT_STATUS", "IN/OUT": "IN_OUT",
+        "DATE 1": "DATE_1", "DATE 2": "DATE_2", "COMMENTS & ACTIONS": "COMMENTS",
+        "Personnel_Type": "PERSONNEL_TYPE", "Pay_Grade_Level": "PAY_GRADE_LEVEL",
+        "Model_Criticality_Score": "CRITICALITY_SCORE",
+    }
+    data = data.rename(columns=aliases)
+    for column in data.columns:
+        if data[column].dtype == "object":
+            data[column] = data[column].replace(r"^\s*$", pd.NA, regex=True)
+            data[column] = data[column].astype("string").str.strip()
+    return data
+
+
+def clean_arrivals(data):
+    data = clean_columns(data)
+    required = {"STATUS", "PERSON", "VESSEL", "LOCATION"}
+    missing = required - set(data.columns)
     if missing:
-        raise ValueError("Missing required columns: " + ", ".join(sorted(missing)))
-
-    data = data.rename(
-        columns={
-            "CIVMAR/PER": "PERSON",
-            "EXT STATUS": "EXT_STATUS",
-            "IN/OUT": "IN_OUT",
-            "DATE 1": "DATE_1",
-            "DATE 2": "DATE_2",
-            "COMMENTS & ACTIONS": "COMMENTS",
-        }
-    )
-    if data.empty:
-        raise ValueError("The source contains no passenger rows.")
-
-    data["PERSON"] = data["PERSON"].astype("string").str.strip()
-    if data["PERSON"].isna().any() or data["PERSON"].eq("").any():
-        raise ValueError("Every passenger row must contain a passenger name.")
-
-    invalid_date_counts = {}
-    for column in DATE_COLUMNS:
+        raise ValueError("Arrival data is missing: " + ", ".join(sorted(missing)))
+    date_columns = ["START", "DATE_1", "DATE_2", "DOA", "DUE OFF DT", "LILP DATE"]
+    for column in date_columns:
         if column in data:
-            original = data[column].copy()
-            parsed = pd.to_datetime(original, errors="coerce")
-            invalid = original.notna() & original.astype(str).str.strip().ne("") & parsed.isna()
-            if invalid.any():
-                invalid_date_counts[column] = int(invalid.sum())
-            data[column] = parsed
+            data[column] = pd.to_datetime(data[column], errors="coerce")
+    for column in ["STATUS", "EXT_STATUS", "SEX", "RATING", "VESSEL", "LOCATION", "IN_OUT", "COMMENTS"]:
+        if column in data:
+            data[column] = data[column].fillna("Unknown").astype(str).str.strip().str.upper()
+    data["STATUS"] = data["STATUS"].replace({"": "UNKNOWN", "NAN": "UNKNOWN"})
+    data["PERSON"] = data["PERSON"].fillna("Unknown").astype(str).str.strip()
+    data["SUCCESS"] = data["STATUS"].isin(["ARRIVED", "ON LOCATION"]).astype(int)
+    data.insert(0, "SOURCE_ROW", range(2, len(data) + 2))
+    return data
 
+
+def clean_model(data):
+    data = clean_columns(data)
+    required = {"PERSONNEL_TYPE", "BSO", "PLATFORM", "JOB_SPECIALTY", "BA", "ONBOARD", "GAP", "CRITICALITY_SCORE"}
+    missing = required - set(data.columns)
+    if missing:
+        raise ValueError("Manpower model data is missing: " + ", ".join(sorted(missing)))
+    numeric = ["BA", "ONBOARD", "GAP", "CRITICALITY_SCORE"]
+    for column in numeric:
+        data[column] = pd.to_numeric(data[column], errors="coerce")
     for column in data.columns:
         if data[column].dtype == "object" or str(data[column].dtype) == "string":
-            data[column] = (
-                data[column]
-                .replace(r"^\s*$", pd.NA, regex=True)
-                .fillna("Unknown")
-                .astype(str)
-                .str.strip()
-            )
-
-    data["STATUS"] = data["STATUS"].str.upper()
-    data.insert(0, "SOURCE_ROW", range(2, len(data) + 2))
-    blank_cells = int((data == "Unknown").sum().sum())
-    audit = {
-        "passengers": len(data),
-        "blank_cells": blank_cells,
-        "invalid_dates": invalid_date_counts,
-    }
-    return data, audit
+            data[column] = data[column].fillna("Unknown").astype(str).str.strip()
+    data["STAFFING_STATE"] = data["GAP"].map(lambda value: "Shortage" if value > 0 else ("Surplus" if value < 0 else "Balanced"))
+    return data
 
 
 @st.cache_data
-def cached_load(upload_bytes=None, upload_name=SOURCE_FILE):
-    raw, name = read_source(upload_bytes, upload_name)
-    if raw is None:
-        return None, name, None
-    clean, audit = clean_and_validate(raw)
-    return clean, name, audit
-
-
-def load_data():
-    upload = st.session_state.get("replacement_upload")
-    if upload is not None:
-        return cached_load(upload.getvalue(), upload.name)
-    return cached_load()
+def read_file(path_str, uploaded_bytes=None, uploaded_name=""):
+    if uploaded_bytes is not None:
+        stream = BytesIO(uploaded_bytes)
+        raw = pd.read_excel(stream) if uploaded_name.lower().endswith((".xlsx", ".xls")) else pd.read_csv(stream)
+    else:
+        path = Path(path_str)
+        raw = pd.read_excel(path) if path.suffix.lower() in (".xlsx", ".xls") else pd.read_csv(path)
+    return raw
 
 
 def text_col(data, column):
-    if column in data:
-        return data[column].fillna("Unknown").astype(str).str.upper()
-    return pd.Series("Unknown", index=data.index)
+    return data[column].fillna("Unknown").astype(str).str.upper() if column in data else pd.Series("UNKNOWN", index=data.index)
 
 
-def apply_filters(data):
-    with st.sidebar:
-        st.header("Mission filters")
-        search = st.text_input("Search passengers", placeholder="Last name or full name")
-
-        def choose(label, column):
-            values = sorted(text_col(data, column).unique().tolist()) if column in data else []
-            return st.selectbox(label, ["ALL"] + values)
-
-        status = choose("Status", "STATUS")
-        location = choose("Location", "LOCATION")
-        vessel = choose("Vessel", "VESSEL")
-        sex = choose("Sex", "SEX")
-        st.divider()
-        st.caption("All source passenger rows are included by default.")
-
-    result = data.copy()
-    if search and "PERSON" in result:
-        result = result[text_col(result, "PERSON").str.contains(search.upper(), na=False)]
-    for column, value in [("STATUS", status), ("LOCATION", location), ("VESSEL", vessel), ("SEX", sex)]:
-        if value != "ALL" and column in result:
-            result = result[text_col(result, column) == value]
-    return result
-
-
-def answer_question(question, data):
-    query = question.lower().strip()
-    status = text_col(data, "STATUS")
-    if any(word in query for word in ["how many", "count", "total"]):
-        for key in sorted(status.unique(), key=len, reverse=True):
-            if key.lower() in query:
-                return f"There are **{int((status == key).sum())}** passengers with status **{key}** in the current filtered view."
-        return f"The current filtered view contains **{len(data)}** passengers."
-    if "status" in query or "breakdown" in query:
-        return "Status breakdown: " + ", ".join(f"**{key}** ({value})" for key, value in status.value_counts().items())
-    if "location" in query and "LOCATION" in data:
-        values = text_col(data, "LOCATION").value_counts().head(8)
-        return "Top locations: " + ", ".join(f"**{key}** ({value})" for key, value in values.items())
-    if "vessel" in query and "VESSEL" in data:
-        values = text_col(data, "VESSEL").value_counts().head(8)
-        return "Top vessels: " + ", ".join(f"**{key}** ({value})" for key, value in values.items())
-    if "PERSON" in data:
-        matches = data[text_col(data, "PERSON").str.contains(query.upper(), na=False)]
-        if len(matches):
-            row = matches.iloc[0]
-            return f"I found **{row['PERSON']}** — status: **{row.get('STATUS', 'Unknown')}**, location: **{row.get('LOCATION', 'Unknown')}**, vessel: **{row.get('VESSEL', 'Unknown')}**."
-    return "I can answer questions using the current Epic Fury passenger data."
-
+arrival_path = first_existing(ARRIVAL_FILES)
+model_path = first_existing(MODEL_FILES)
 
 with st.sidebar:
-    st.subheader("Data update")
-    replacement = st.file_uploader(
-        "Upload a replacement CSV/XLSX",
-        type=["csv", "xlsx", "xls"],
-        help="Validated for this session only. The committed master remains MEFMT_data (1).xlsx.",
-    )
-    if replacement is not None:
-        st.session_state.replacement_upload = replacement
-    if st.button("Clear uploaded replacement"):
-        st.session_state.pop("replacement_upload", None)
-        st.cache_data.clear()
-        st.rerun()
+    st.header("Mission filters")
+    arrival_upload = st.file_uploader("Replace arrival data", type=["csv", "xlsx", "xls"])
+    model_upload = st.file_uploader("Replace manpower model", type=["csv", "xlsx", "xls"])
 
 try:
-    df, source_name, audit = load_data()
-except (ValueError, pd.errors.ParserError) as exc:
+    arrivals_raw = read_file(str(arrival_path), arrival_upload.getvalue() if arrival_upload else None, arrival_upload.name if arrival_upload else "") if arrival_path or arrival_upload else None
+    model_raw = read_file(str(model_path), model_upload.getvalue() if model_upload else None, model_upload.name if model_upload else "") if model_path or model_upload else None
+    arrivals = clean_arrivals(arrivals_raw) if arrivals_raw is not None else pd.DataFrame()
+    model = clean_model(model_raw) if model_raw is not None else pd.DataFrame()
+except (ValueError, pd.errors.ParserError, KeyError) as exc:
     st.error(f"Data validation failed: {exc}")
     st.stop()
 
-if df is None:
-    st.error(f"The master source `{SOURCE_FILE}` is missing or empty.")
+if arrivals.empty and model.empty:
+    st.error("No supported dataset was found. Add the arrival CSV and/or manpower model CSV to the repository.")
     st.stop()
 
-st.title("⚓ Epic Fury Movement Command Center")
-st.caption("Passenger movement, travel readiness, and operational accountability")
-source_path = Path(__file__).resolve().parent / SOURCE_FILE
-if source_name == SOURCE_FILE and source_path.exists():
-    age_days = (datetime.now(timezone.utc).timestamp() - source_path.stat().st_mtime) / 86400
-    if age_days > STALE_AFTER_DAYS:
-        st.warning(f"Source data is approximately {age_days:.0f} days old. Upload or commit a newer approved file.")
+st.title("⚓ SMOM Movement & Manpower Command Center")
+st.caption("Cleaned arrival tracking, staffing gaps, and model criticality in one view")
 
-with st.expander("Data quality and update instructions"):
-    st.write(
-        f"**Source:** `{source_name}`  |  **Passenger rows:** {audit['passengers']}  |  **Blank fields left as Unknown:** {audit['blank_cells']}"
-    )
-    if audit["invalid_dates"]:
-        st.warning(
-            "Invalid date values were left blank: "
-            + ", ".join(f"{key} ({value})" for key, value in audit["invalid_dates"].items())
-        )
-    st.info(
-        "The committed master data file is MEFMT_data (1).xlsx. Uploaded replacements are temporary for the current session only."
-    )
-
-filtered = apply_filters(df)
-status = text_col(filtered, "STATUS")
-counts = status.value_counts()
-metrics = [
-    ("TOTAL PASSENGERS", len(filtered)),
-    ("ON LOCATION", counts.get("ON LOCATION", 0)),
-    ("PENDING", counts.get("PENDING", 0)),
-    ("TRAVEL CONFIRMED", counts.get("TRAVEL CONFIRMED", 0)),
-    ("NO SHOW", counts.get("NO SHOW", 0)),
-]
-for column, (label, value) in zip(st.columns(len(metrics)), metrics):
-    column.metric(label, int(value))
-
-st.divider()
-chart_left, chart_right = st.columns(2)
-if len(filtered):
-    status_df = status.value_counts().rename_axis("Status").reset_index(name="Count")
-    figure = px.bar(
-        status_df,
-        x="Status",
-        y="Count",
-        color="Status",
-        color_discrete_map=STATUS_COLORS,
-        title="Movement status",
-    )
-    figure.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        showlegend=False,
-    )
-    chart_left.plotly_chart(figure, use_container_width=True)
-
-    if "LOCATION" in filtered:
-        locations = text_col(filtered, "LOCATION").value_counts().head(10).rename_axis("Location").reset_index(name="Count")
-        location_figure = px.bar(
-            locations,
-            x="Count",
-            y="Location",
-            orientation="h",
-            color="Count",
-            color_continuous_scale="Blues",
-            title="Top locations",
-        )
-        location_figure.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-        )
-        chart_right.plotly_chart(location_figure, use_container_width=True)
-
-st.divider()
-tab_roster, tab_timeline, tab_chat = st.tabs(["📋 Roster", "🗓️ Travel timeline", "💬 Ask the tracker"])
-
-with tab_roster:
-    st.subheader("Passenger movement roster")
-    preferred = [
-        "SOURCE_ROW", "STATUS", "EXT_STATUS", "PERSON", "SEX", "RATING", "VESSEL",
-        "LOCATION", "START", "IN_OUT", "DATE_1", "DATE_2", "DOA", "DUE OFF DT", "COMMENTS",
-    ]
-    view = filtered[[column for column in preferred if column in filtered] or list(filtered.columns)].copy()
-    for column in view.columns:
-        if pd.api.types.is_datetime64_any_dtype(view[column]):
-            view[column] = view[column].dt.strftime("%Y-%m-%d")
-    st.dataframe(view, use_container_width=True, hide_index=True)
-    st.download_button(
-        "Download filtered CSV",
-        filtered.to_csv(index=False).encode("utf-8"),
-        "epic_fury_filtered.csv",
-        "text/csv",
-    )
-
-with tab_timeline:
-    st.subheader("Upcoming / recorded travel dates")
-    date_column = "DATE_1" if "DATE_1" in filtered else ("DATE_2" if "DATE_2" in filtered else None)
-    if date_column and filtered[date_column].notna().any():
-        timeline = filtered.dropna(subset=[date_column]).sort_values(date_column).copy()
-        timeline["Person"] = timeline.get("PERSON", pd.Series("Passenger", index=timeline.index))
-        timeline_figure = px.scatter(
-            timeline,
-            x=date_column,
-            y="STATUS",
-            color="STATUS",
-            hover_name="Person",
-            color_discrete_map=STATUS_COLORS,
-            title="Movement activity by date",
-        )
-        timeline_figure.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-        )
-        st.plotly_chart(timeline_figure, use_container_width=True)
+with st.sidebar:
+    st.divider()
+    if not arrivals.empty:
+        status_filter = st.selectbox("Arrival status", ["ALL"] + sorted(text_col(arrivals, "STATUS").unique()))
+        vessel_filter = st.selectbox("Arrival vessel", ["ALL"] + sorted(text_col(arrivals, "VESSEL").unique()))
     else:
-        st.info("No travel dates are available in the current filtered view.")
+        status_filter = vessel_filter = "ALL"
 
-with tab_chat:
-    st.subheader("Ask the Epic Fury tracker")
-    st.caption("Answers use only the validated MEFMT master source.")
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-    for role, message in st.session_state.chat_history:
-        st.chat_message(role).markdown(message)
-    prompt = st.chat_input("Ask: How many are pending? Where are passengers located?")
-    if prompt:
-        st.session_state.chat_history.extend(
-            [("user", prompt), ("assistant", answer_question(prompt, filtered))]
-        )
-        st.rerun()
+filtered_arrivals = arrivals.copy()
+if status_filter != "ALL":
+    filtered_arrivals = filtered_arrivals[text_col(filtered_arrivals, "STATUS") == status_filter]
+if vessel_filter != "ALL":
+    filtered_arrivals = filtered_arrivals[text_col(filtered_arrivals, "VESSEL") == vessel_filter]
+
+if not arrivals.empty:
+    counts = text_col(filtered_arrivals, "STATUS").value_counts()
+    success_rate = filtered_arrivals["SUCCESS"].mean() * 100 if len(filtered_arrivals) else 0
+    metrics = [
+        ("ARRIVAL RECORDS", len(filtered_arrivals)),
+        ("SUCCESSFUL ARRIVALS", int(filtered_arrivals["SUCCESS"].sum())),
+        ("SUCCESS RATE", f"{success_rate:.1f}%"),
+        ("PENDING", int(counts.get("PENDING", 0))),
+        ("TRAVEL CONFIRMED", int(counts.get("TRAVEL CONFIRMED", 0))),
+    ]
+    for column, (label, value) in zip(st.columns(len(metrics)), metrics):
+        column.metric(label, value)
+
+st.divider()
+
+if not arrivals.empty:
+    st.subheader("Arrival operations")
+    left, right = st.columns(2)
+    status_df = text_col(filtered_arrivals, "STATUS").value_counts().rename_axis("Status").reset_index(name="Count")
+    status_fig = px.bar(status_df, x="Status", y="Count", color="Status", color_discrete_map=STATUS_COLORS, title="Arrival status")
+    status_fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False)
+    left.plotly_chart(status_fig, use_container_width=True)
+
+    vessel_success = filtered_arrivals.groupby("VESSEL", dropna=False)["SUCCESS"].agg(["mean", "count"]).reset_index()
+    vessel_success["Success rate (%)"] = vessel_success["mean"] * 100
+    vessel_success = vessel_success.sort_values(["Success rate (%)", "count"], ascending=[False, False]).head(12)
+    success_fig = px.bar(vessel_success, x="VESSEL", y="Success rate (%)", color="Success rate (%)", color_continuous_scale="Viridis", title="Arrival success rate by vessel")
+    success_fig.update_yaxes(range=[0, 100])
+    success_fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+    right.plotly_chart(success_fig, use_container_width=True)
+
+if not model.empty:
+    st.subheader("Manpower model")
+    model_left, model_right = st.columns(2)
+    gap_summary = model.groupby("BSO", dropna=False)[["BA", "ONBOARD"]].sum().reset_index()
+    gap_summary["Net gap"] = gap_summary["BA"] - gap_summary["ONBOARD"]
+    gap_fig = px.bar(gap_summary.sort_values("Net gap"), x="BSO", y="Net gap", color="Net gap", color_continuous_scale="RdYlGn", title="Net staffing gap by BSO")
+    gap_fig.add_hline(y=0, line_dash="dash", line_color="white")
+    gap_fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+    model_left.plotly_chart(gap_fig, use_container_width=True)
+
+    criticality = model.groupby("JOB_SPECIALTY", dropna=False)["CRITICALITY_SCORE"].mean().reset_index().sort_values("CRITICALITY_SCORE", ascending=False)
+    criticality_fig = px.bar(criticality.head(12), x="CRITICALITY_SCORE", y="JOB_SPECIALTY", orientation="h", color="CRITICALITY_SCORE", color_continuous_scale="Magma", title="Average criticality by specialty")
+    criticality_fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+    model_right.plotly_chart(criticality_fig, use_container_width=True)
+
+st.divider()
+tab_arrivals, tab_model, tab_quality = st.tabs(["📋 Clean arrival roster", "📊 Clean manpower model", "✅ Data quality"])
+
+with tab_arrivals:
+    if arrivals.empty:
+        st.info("No arrival dataset loaded.")
+    else:
+        view = filtered_arrivals.copy()
+        for column in view.columns:
+            if pd.api.types.is_datetime64_any_dtype(view[column]):
+                view[column] = view[column].dt.strftime("%Y-%m-%d")
+        st.dataframe(view, use_container_width=True, hide_index=True)
+        st.download_button("Download cleaned arrivals", view.to_csv(index=False).encode("utf-8"), "cleaned_arrivals.csv", "text/csv")
+
+with tab_model:
+    if model.empty:
+        st.info("No manpower model dataset loaded.")
+    else:
+        st.dataframe(model, use_container_width=True, hide_index=True)
+        st.download_button("Download cleaned manpower model", model.to_csv(index=False).encode("utf-8"), "cleaned_manpower_model.csv", "text/csv")
+
+with tab_quality:
+    st.write({
+        "arrival_source": arrival_upload.name if arrival_upload else (arrival_path.name if arrival_path else "not loaded"),
+        "arrival_rows": len(arrivals),
+        "arrival_columns": len(arrivals.columns),
+        "model_source": model_upload.name if model_upload else (model_path.name if model_path else "not loaded"),
+        "model_rows": len(model),
+        "model_columns": len(model.columns),
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+    })
+    st.info("Blank text fields are standardized to Unknown, dates are parsed safely, numeric model fields are coerced, and derived success/staffing-state fields are added.")
