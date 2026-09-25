@@ -9,80 +9,23 @@ import streamlit as st
 
 st.set_page_config(page_title="SMOM | Strategic Insight Studio", page_icon="⚓", layout="wide", initial_sidebar_state="expanded")
 
-# Modern futuristic theme: deep blacks, neon purples, electric blues, and glowing accents
 st.markdown("""
 <style>
-:root {
-  --black-950: #0a0e27;
-  --black-900: #0f1533;
-  --black-800: #151d3f;
-  --purple-neon: #a855f7;
-  --purple-dark: #7e22ce;
-  --blue-electric: #06b6d4;
-  --blue-bright: #0ea5e9;
-  --pink-accent: #ec4899;
-  --white-text: #f0f9ff;
-  --muted-text: #cbd5e1;
-}
-.stApp {
-  background: linear-gradient(135deg, var(--black-950) 0%, #1a1f4b 50%, #2d1b69 100%);
-  color: var(--white-text);
-}
-.block-container { max-width: 1500px; padding-top: 1.5rem; }
-[data-testid="stSidebar"] {
-  background: linear-gradient(180deg, var(--black-900) 0%, #1a0f3d 100%);
-  border-right: 2px solid var(--purple-neon);
-}
-[data-testid="stSidebar"] * { color: var(--white-text); }
-[data-testid="stMetric"] {
-  background: linear-gradient(145deg, rgba(168, 85, 247, .08), rgba(6, 182, 212, .06));
-  border: 2px solid var(--purple-neon);
-  border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 0 20px rgba(168, 85, 247, .15), inset 0 0 10px rgba(6, 182, 212, .05);
-}
-[data-testid="stMetricLabel"] { color: var(--blue-bright) !important; font-weight: 700; font-size: 0.85rem; letter-spacing: 0.05em; text-transform: uppercase; }
-[data-testid="stMetricValue"] { color: #ffffff !important; font-weight: 600; }
-.insight {
-  background: linear-gradient(110deg, rgba(126, 34, 206, .12), rgba(6, 182, 212, .08));
-  border: 2px solid var(--blue-bright);
-  border-left: 5px solid var(--purple-neon);
-  border-radius: 12px;
-  padding: 16px 20px;
-  color: #e8f4ff;
-  box-shadow: 0 0 15px rgba(6, 182, 212, .1);
-}
-.insight strong { color: var(--blue-electric); }
-.stMarkdown, .stCaption, [data-testid="stCaptionContainer"] { color: var(--muted-text); }
-label, .stTextInput label, .stMultiSelect label, .stRadio label { color: var(--white-text) !important; font-weight: 500; }
-.stButton > button, .stDownloadButton > button {
-  background: linear-gradient(135deg, var(--purple-neon), var(--pink-accent));
-  color: #ffffff;
-  border: 1px solid var(--purple-neon);
-  border-radius: 8px;
-  font-weight: 600;
-  box-shadow: 0 0 10px rgba(168, 85, 247, .3);
-}
-.stButton > button:hover, .stDownloadButton > button:hover { 
-  background: linear-gradient(135deg, var(--pink-accent), var(--purple-neon));
-  box-shadow: 0 0 20px rgba(168, 85, 247, .5);
-}
-[data-baseweb="select"] > div, [data-baseweb="input"] > div {
-  background: rgba(15, 21, 51, .8);
-  color: #f0f9ff;
-  border: 1.5px solid var(--blue-electric) !important;
-  border-radius: 6px;
-}
-[data-baseweb="select"] input, [data-baseweb="select"] span, [data-baseweb="input"] input { color: var(--white-text) !important; }
-[data-testid="stExpander"] { 
-  border: 1.5px solid rgba(168, 85, 247, .4); 
-  background: rgba(21, 29, 63, .6);
-  border-radius: 10px;
-}
-[data-testid="stExpander"] summary { color: var(--blue-bright) !important; font-weight: 600; }
-h1, h2, h3 { color: #ffffff !important; letter-spacing: .02em; text-shadow: 0 0 10px rgba(168, 85, 247, .3); }
-h1 { font-size: 2.5rem; font-weight: 700; }
-h2 { font-size: 1.8rem; font-weight: 600; }
+:root { --bg:#0a0e27; --panel:#151d3f; --purple:#a855f7; --cyan:#06b6d4; --pink:#ec4899; --text:#f0f9ff; --muted:#cbd5e1; }
+.stApp { background:linear-gradient(135deg,var(--bg),#1a1f4b 50%,#2d1b69); color:var(--text); }
+.block-container { max-width:1500px; padding-top:1.5rem; }
+[data-testid="stSidebar"] { background:linear-gradient(180deg,#0f1533,#1a0f3d); border-right:2px solid var(--purple); }
+[data-testid="stSidebar"] * { color:var(--text); }
+[data-testid="stMetric"] { background:linear-gradient(145deg,rgba(168,85,247,.12),rgba(6,182,212,.08)); border:1px solid var(--purple); border-radius:12px; padding:14px; box-shadow:0 0 18px rgba(168,85,247,.14); }
+[data-testid="stMetricLabel"] { color:#67e8f9 !important; font-weight:700; }
+[data-testid="stMetricValue"] { color:#fff !important; }
+.insight { background:linear-gradient(110deg,rgba(126,34,206,.2),rgba(6,182,212,.12)); border:1px solid var(--cyan); border-left:5px solid var(--purple); border-radius:10px; padding:15px 18px; color:var(--text); }
+.stMarkdown,.stCaption,[data-testid="stCaptionContainer"] { color:var(--muted); }
+label { color:var(--text) !important; }
+[data-baseweb="select"] > div,[data-baseweb="input"] > div { background:rgba(15,21,51,.9); color:var(--text); border:1px solid var(--cyan) !important; }
+[data-baseweb="select"] input,[data-baseweb="select"] span,[data-baseweb="input"] input { color:var(--text) !important; }
+[data-testid="stExpander"] { border:1px solid rgba(168,85,247,.5); background:rgba(21,29,63,.55); }
+h1,h2,h3 { color:#fff !important; text-shadow:0 0 10px rgba(168,85,247,.3); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -96,20 +39,17 @@ def demo_data():
     dates = pd.date_range(end=pd.Timestamp.today().normalize(), periods=180, freq="D")
     workload = rng.normal(72, 18, 180).clip(10, 140).round(1)
     staffing = (workload * rng.normal(.91, .12, 180)).clip(5, 150).round(1)
-    return pd.DataFrame({"Date": dates, "Region": rng.choice(["North", "South", "East", "West"], 180), "Workload": workload, "Staffing": staffing, "Readiness": (100 - (workload - staffing).clip(0) * 1.7).clip(35, 100).round(1), "Priority": rng.choice(["Routine", "Elevated", "Critical"], 180, p=[.55, .3, .15])})
+    return pd.DataFrame({"Date":dates, "Region":rng.choice(["North","South","East","West"],180), "Workload":workload, "Staffing":staffing, "Readiness":(100-(workload-staffing).clip(0)*1.7).clip(35,100).round(1), "Priority":rng.choice(["Routine","Elevated","Critical"],180,p=[.55,.3,.15])})
 
 
 @st.cache_data(show_spinner=False)
 def read_upload(file_name, file_bytes):
-    suffix = Path(file_name).suffix.lower()
-    stream = BytesIO(file_bytes)
+    suffix = Path(file_name).suffix.lower(); stream = BytesIO(file_bytes)
     if suffix == ".csv":
         for encoding in ("utf-8-sig", "cp1252", "latin1"):
             try:
-                stream.seek(0)
-                return pd.read_csv(stream, encoding=encoding)
-            except UnicodeDecodeError:
-                continue
+                stream.seek(0); return pd.read_csv(stream, encoding=encoding)
+            except UnicodeDecodeError: continue
     if suffix in {".xlsx", ".xls"}: return pd.read_excel(stream)
     if suffix == ".json": return pd.read_json(stream)
     if suffix == ".parquet": return pd.read_parquet(stream)
@@ -122,22 +62,18 @@ def load_uploads(files):
     for uploaded in files or []:
         try:
             frame = read_upload(uploaded.name, uploaded.getvalue()).copy()
-            frame.columns = [str(c).strip() or f"Column {i + 1}" for i, c in enumerate(frame.columns)]
-            frame = frame.dropna(how="all").reset_index(drop=True)
-            frame["Source file"] = uploaded.name
-            frames.append(frame)
-        except Exception as exc:
-            errors.append(f"{uploaded.name}: {exc}")
+            frame.columns = [str(c).strip() or f"Column {i+1}" for i,c in enumerate(frame.columns)]
+            frame = frame.dropna(how="all").reset_index(drop=True); frame["Source file"] = uploaded.name; frames.append(frame)
+        except Exception as exc: errors.append(f"{uploaded.name}: {exc}")
     return (pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()), errors
 
 
 def parse_dates(series, column_name=""):
-    clean = series.replace({"": np.nan, "#REF!": np.nan, "STAND BY": np.nan})
-    try:
-        parsed = pd.to_datetime(clean, errors="coerce")
+    clean = series.replace({"":np.nan, "#REF!":np.nan, "STAND BY":np.nan})
+    try: parsed = pd.to_datetime(clean, errors="coerce")
     except (TypeError, ValueError, OverflowError):
         def parse_one(value):
-            if not isinstance(value, (list, tuple, dict, set)) and pd.isna(value): return pd.NaT
+            if not isinstance(value,(list,tuple,dict,set)) and pd.isna(value): return pd.NaT
             try: return pd.to_datetime(value, errors="coerce")
             except (TypeError, ValueError, OverflowError): return pd.NaT
         parsed = clean.map(parse_one)
@@ -154,140 +90,159 @@ def profile(data):
         if column == "Source file": continue
         series, non_null = data[column], data[column].dropna()
         if not len(non_null): categorical.append(column); continue
-        numeric_candidate = pd.to_numeric(non_null.astype(str).str.replace(",", "", regex=False), errors="coerce")
-        date_candidate = parse_dates(series, column)
-        name = str(column).lower()
+        numeric_candidate = pd.to_numeric(non_null.astype(str).str.replace(",","",regex=False), errors="coerce")
+        date_candidate = parse_dates(series, column); name = str(column).lower()
         date_likely = any(word in name for word in DATE_WORDS) and date_candidate.notna().mean() >= .35
         if date_likely or (date_candidate.notna().mean() >= .85 and numeric_candidate.notna().mean() < .85 and non_null.nunique() > 1): dates.append(column)
         elif pd.api.types.is_numeric_dtype(series) or numeric_candidate.notna().mean() >= .9: numeric.append(column)
-        elif non_null.nunique() <= min(30, max(10, len(data) * .2)): categorical.append(column)
+        elif non_null.nunique() <= min(30,max(10,len(data)*.2)): categorical.append(column)
         else: text.append(column)
     return numeric, dates, categorical, text
 
 
-def clean_label(series): return series.fillna("Missing").astype(str).str.strip().replace({"": "Missing"})
+def clean_label(series): return series.fillna("Missing").astype(str).str.strip().replace({"":"Missing"})
 
 
 def best_category(data, categorical):
-    usable = [c for c in categorical if 2 <= data[c].nunique(dropna=True) <= min(30, max(5, len(data) // 2))]
-    preferred = ("status", "location", "ship", "vessel", "arrival", "departure", "employee", "type", "travel writer")
-    return sorted(usable, key=lambda c: (not any(k in c.lower() for k in preferred), data[c].nunique()))[0] if usable else (categorical[0] if categorical else None)
+    usable = [c for c in categorical if 2 <= data[c].nunique(dropna=True) <= min(30,max(5,len(data)//2))]
+    preferred = ("status","location","ship","vessel","arrival","departure","employee","type","travel writer")
+    return sorted(usable,key=lambda c:(not any(k in c.lower() for k in preferred),data[c].nunique()))[0] if usable else (categorical[0] if categorical else None)
+
+
+def chart_for(data, numeric, dates, categorical, chart_type="Auto", x_column=None, y_column=None):
+    category = x_column or best_category(data, categorical); metric = y_column or (numeric[0] if numeric else None)
+    if chart_type == "Auto":
+        chart_type = "Bar" if category else ("Histogram" if metric else "Record count")
+    if chart_type == "Bar" and category:
+        counts = clean_label(data[category]).value_counts().head(12).sort_values()
+        return px.bar(counts,x=counts.values,y=counts.index,orientation="h",title=f"Composition by {category}",color_discrete_sequence=["#a855f7"]), f"Top segments in {category}"
+    if chart_type == "Line" and dates and metric:
+        frame = pd.DataFrame({"Date":parse_dates(data[dates[0]]),"Value":pd.to_numeric(data[metric],errors="coerce")}).dropna().sort_values("Date")
+        return px.line(frame,x="Date",y="Value",markers=True,title=f"{metric} over {dates[0]}",color_discrete_sequence=["#06b6d4"]), "Trend using one date and one numeric field"
+    if chart_type == "Scatter" and len(numeric) >= 2:
+        x, y = x_column or numeric[0], y_column or numeric[1]
+        return px.scatter(data,x=x,y=y,title=f"{x} vs {y}",color_discrete_sequence=["#ec4899"]), "Relationship between two numeric fields"
+    if chart_type == "Histogram" and metric:
+        return px.histogram(data,x=metric,nbins=20,title=f"Distribution of {metric}",color_discrete_sequence=["#06b6d4"]), f"Distribution of {metric}"
+    missing = data.isna().mean().sort_values().tail(12).sort_values()
+    return px.bar(x=missing.values,y=missing.index,orientation="h",range_x=[0,1],title="Data quality: missing values",color_discrete_sequence=["#f43f5e"]), "Missingness by field"
 
 
 def charts_for(data, numeric, dates, categorical):
-    charts, category = [], best_category(data, categorical)
-    neon_palette = ["#a855f7", "#06b6d4", "#ec4899", "#0ea5e9", "#f43f5e", "#8b5cf6"]
-    if category:
-        counts = clean_label(data[category]).value_counts().head(15).sort_values()
-        charts.append((px.bar(counts, x=counts.values, y=counts.index, orientation="h", title=f"Composition by {category}", color_discrete_sequence=["#a855f7"]), f"Largest segments in {category}"))
-    elif numeric: charts.append((px.histogram(data, x=numeric[0], nbins=24, title=f"Distribution of {numeric[0]}", color_discrete_sequence=["#06b6d4"]), f"Distribution of {numeric[0]}"))
-    else: charts.append((px.bar(x=["Rows"], y=[len(data)], title="Record count", color_discrete_sequence=["#0ea5e9"]), "Record count"))
-    if dates:
-        events = [pd.DataFrame({"Date": parse_dates(data[col], col), "Event": col}) for col in dates[:8]]
-        event_frame = pd.concat(events, ignore_index=True).dropna()
-        if not event_frame.empty:
-            by_day = event_frame.groupby(["Date", "Event"]).size().reset_index(name="Records")
-            charts.append((px.line(by_day, x="Date", y="Records", color="Event", markers=True, title="Milestones and events over time", color_discrete_sequence=neon_palette), "Date fields detected; timeline shows operational flow."))
-        else: charts.append((px.bar(x=["No valid dates"], y=[0], title="Timeline unavailable", color_discrete_sequence=["#a855f7"]), "Date columns were detected but could not be parsed."))
-    elif len(numeric) >= 2: charts.append((px.scatter(data, x=numeric[0], y=numeric[1], title=f"Relationship: {numeric[0]} vs {numeric[1]}", color_discrete_sequence=["#06b6d4"]), "Numeric relationship"))
-    else: charts.append((px.bar(x=["No time field"], y=[len(data)], title="No time field detected", color_discrete_sequence=["#0ea5e9"]), "Add a date field for trend analysis."))
-    if category and numeric:
-        metric = numeric[0]
-        grouped = data.assign(_category=clean_label(data[category]), _metric=pd.to_numeric(data[metric], errors="coerce"))
-        grouped = grouped.groupby("_category", as_index=False)["_metric"].agg(["mean", "count"]).reset_index().sort_values("mean").tail(15)
-        charts.append((px.bar(grouped, x="mean", y="_category", orientation="h", text="count", title=f"Average {metric} by {category}", color_discrete_sequence=["#ec4899"]), f"Comparison of {metric} across {category}"))
-    elif len(numeric) >= 2:
-        corr = data[numeric].corr(numeric_only=True).round(2)
-        charts.append((px.imshow(corr, text_auto=True, color_continuous_scale=[[0, "#7e22ce"], [.5, "#0f1533"], [1, "#06b6d4"]], zmin=-1, zmax=1, title="Numeric signals moving together"), "Correlation view"))
-    else:
-        missing = data.isna().mean().sort_values().tail(12).sort_values()
-        charts.append((px.bar(x=missing.values, y=missing.index, orientation="h", title="Missingness by field", color_discrete_sequence=["#f43f5e"]), "Data completeness"))
-    missing = data.isna().mean().sort_values().tail(15).sort_values()
-    charts.append((px.bar(x=missing.values, y=missing.index, orientation="h", range_x=[0, 1], title="Data quality: missing values by field", color_discrete_sequence=["#f43f5e"]), "Prioritize fields with high missingness before acting."))
-    return charts[:4]
+    charts = []
+    choices = [("Bar",None,None),("Line",dates[0] if dates else None,numeric[0] if numeric else None),("Histogram",None,numeric[0] if numeric else None),("Quality",None,None)]
+    for kind, x, y in choices:
+        if kind == "Quality": chart, explanation = chart_for(data,numeric,dates,categorical,"Quality")
+        else: chart, explanation = chart_for(data,numeric,dates,categorical,kind,x,y)
+        charts.append((chart, explanation))
+    return charts
 
 
 def insights(data, numeric, dates, categorical, text):
-    findings = []
+    findings=[]
     if categorical:
-        category = best_category(data, categorical); counts = clean_label(data[category]).value_counts()
-        if len(counts): findings.append(f"**{counts.index[0]}** is the largest `{category}` segment at **{counts.iloc[0] / len(data):.1%}** of records.")
+        category=best_category(data,categorical); counts=clean_label(data[category]).value_counts()
+        if len(counts): findings.append(f"**{counts.index[0]}** is the largest `{category}` segment at **{counts.iloc[0]/len(data):.1%}** of records.")
     if dates:
-        date_col = dates[0]; parsed = parse_dates(data[date_col], date_col).dropna()
-        if len(parsed): findings.append(f"`{date_col}` spans **{parsed.min():%Y-%m-%d} to {parsed.max():%Y-%m-%d}**; use the timeline to validate sequencing and bottlenecks.")
-    missing = data.isna().mean().sort_values(ascending=False)
-    if len(missing) and missing.iloc[0] >= .25: findings.append(f"Data-quality risk: **{missing.index[0]}** is missing in **{missing.iloc[0]:.1%}** of rows.")
-    if text:
-        keyword_hits = data[text].fillna("").astype(str).apply(lambda s: s.str.contains(r"unable|await|stand.?by|delay|cancel|no.?show|ref", case=False, regex=True).sum()).sum()
-        if keyword_hits: findings.append(f"The free-text fields contain **{int(keyword_hits)}** operational exception markers; review the attention queue below.")
+        parsed=parse_dates(data[dates[0]]).dropna()
+        if len(parsed): findings.append(f"`{dates[0]}` spans **{parsed.min():%Y-%m-%d} to {parsed.max():%Y-%m-%d}**.")
+    missing=data.isna().mean().sort_values(ascending=False)
+    if len(missing) and missing.iloc[0]>=.25: findings.append(f"**{missing.index[0]}** is missing in **{missing.iloc[0]:.1%}** of rows.")
     return " ".join(findings) or "Not enough structure for a directional finding; validate the source schema first."
 
 
-def sensitive_columns(frame): return [column for column in frame.columns if re.search(SENSITIVE_WORDS, str(column), re.I)]
-
+def sensitive_columns(frame): return [c for c in frame.columns if re.search(SENSITIVE_WORDS,str(c),re.I)]
 
 def mask_sensitive(frame, columns=None):
-    result = frame.copy(); columns = sensitive_columns(result) if columns is None else columns
-    for column in columns: result[column] = result[column].notna().map({True: "[present]", False: "[missing]"})
+    result=frame.copy(); columns=sensitive_columns(result) if columns is None else columns
+    for column in columns: result[column]=result[column].notna().map({True:"[present]",False:"[missing]"})
     return result
+
+
+def local_answer(question, data, numeric, dates, categorical):
+    q=question.lower().strip(); category=best_category(data,categorical)
+    if any(word in q for word in ("chart","graph","visual","plot")):
+        if "line" in q or "trend" in q: return "Use the chart controls below to choose Line, then select a date and numeric field."
+        if "scatter" in q or "relationship" in q: return "Use Scatter to compare two numeric fields."
+        if "hist" in q or "distribution" in q: return "Use Histogram to inspect the distribution of one numeric field."
+        return "Use the chart controls below this chat to select a focused chart type and fields."
+    if "missing" in q or "quality" in q:
+        missing=data.isna().mean().sort_values(ascending=False); top=missing.head(5)
+        return "Missingness: " + "; ".join(f"{c} {v:.1%}" for c,v in top.items()) + "."
+    if "how many" in q or "rows" in q or "records" in q: return f"The current filtered dataset contains {len(data):,} rows across {len(data.columns):,} fields."
+    if "date" in q or "time" in q:
+        return f"Detected date fields: {', '.join(dates) if dates else 'none'}."
+    if category and ("largest" in q or "most" in q or "category" in q):
+        counts=clean_label(data[category]).value_counts(); return f"The largest {category} segment is {counts.index[0]} with {counts.iloc[0]:,} records ({counts.iloc[0]/len(data):.1%})."
+    if numeric:
+        stats=pd.to_numeric(data[numeric[0]],errors="coerce").describe()
+        return f"For {numeric[0]}, the mean is {stats.get('mean',np.nan):.2f}, median {stats.get('50%',np.nan):.2f}, and valid values {int(stats.get('count',0)):,}."
+    return "I can answer questions about row counts, missingness, detected dates, categories, numeric summaries, and chart choices using only this dataset."
 
 
 with st.sidebar:
     st.header("Upload your data")
-    uploads = st.file_uploader("Add one or more datasets", type=SUPPORTED_TYPES, accept_multiple_files=True)
+    uploads=st.file_uploader("Add one or more datasets",type=SUPPORTED_TYPES,accept_multiple_files=True)
     st.caption("Supported: CSV, Excel, JSON, Parquet, XML. Files are analyzed in-session.")
 
-uploaded_data, errors = load_uploads(uploads)
-using_demo = uploaded_data.empty
-analysis_data = demo_data() if using_demo else uploaded_data
-detected_sensitive = [] if using_demo else sensitive_columns(analysis_data)
-mask_names = True
+uploaded_data, errors=load_uploads(uploads); using_demo=uploaded_data.empty; analysis_data=demo_data() if using_demo else uploaded_data
+detected_sensitive=[] if using_demo else sensitive_columns(analysis_data); mask_names=True
 if detected_sensitive:
-    st.warning("Potential personal identifiers were detected in the uploaded schema. Masking is recommended before displaying previews or downloading prepared data.")
-    st.write("Detected fields: " + ", ".join(f"`{column}`" for column in detected_sensitive))
-    masking_choice = st.radio("How should these fields be handled in previews and downloads?", ("Mask detected fields (recommended)", "Continue without masking"), index=0, key="sensitive_data_choice")
-    mask_names = masking_choice.startswith("Mask")
-    if not mask_names: st.info("You chose to continue without masking. Make sure you are authorized to view and export these identifiers.")
+    st.warning("Potential personal identifiers were detected. Masking is recommended for previews and downloads.")
+    mask_names=st.radio("Identifier handling",("Mask detected fields (recommended)","Continue without masking"),key="sensitive_data_choice").startswith("Mask")
 
-numeric, dates, categorical, text = profile(analysis_data)
+numeric, dates, categorical, text=profile(analysis_data)
 with st.sidebar:
-    filter_columns = [c for c in categorical if 1 < analysis_data[c].nunique(dropna=True) <= 20][:4]
-    selected = {}
-    for column in filter_columns:
-        values = sorted(clean_label(analysis_data[column]).unique().tolist())
-        selected[column] = st.multiselect(column, values, default=values)
-
-filtered = analysis_data.copy()
+    selected={}
+    for column in [c for c in categorical if 1 < analysis_data[c].nunique(dropna=True) <= 20][:4]:
+        values=sorted(clean_label(analysis_data[column]).unique().tolist()); selected[column]=st.multiselect(column,values,default=values)
+filtered=analysis_data.copy()
 for column, values in selected.items():
-    if values: filtered = filtered[clean_label(filtered[column]).isin(values)]
-missing_rate = float(filtered.isna().mean().mean()) if not filtered.empty else 0
-st.title("⚓ Strategic Insight Studio")
-st.caption("Upload a tabular dataset. The app profiles it, filters it, identifies operational risk, and selects four decision-useful views.")
+    if values: filtered=filtered[clean_label(filtered[column]).isin(values)]
+
+st.title("⚓ Strategic Insight Studio"); st.caption("Focused operational analysis with a local data assistant—no external API or data transfer.")
 if using_demo: st.info("Preview mode: upload your file to replace the illustrative data.")
 else: st.success(f"Analyzing {len(uploads)} file(s), {len(filtered):,} filtered rows, and {len(filtered.columns):,} fields.")
 for error in errors: st.warning(error)
-metrics = st.columns(4)
-metrics[0].metric("RECORDS", f"{len(filtered):,}"); metrics[1].metric("FIELDS", f"{len(filtered.columns):,}"); metrics[2].metric("DATE / NUMERIC SIGNALS", f"{len(dates)} / {len(numeric)}"); metrics[3].metric("MISSING VALUES", f"{missing_rate:.1%}")
-quality = "Data looks sound for exploration." if missing_rate < .05 else "Proceed carefully: missingness or malformed values can distort conclusions."
-st.markdown(f'<div class="insight"><strong>{quality}</strong><br>{insights(filtered, numeric, dates, categorical, text)}</div>', unsafe_allow_html=True)
+missing_rate=float(filtered.isna().mean().mean()) if not filtered.empty else 0
+metrics=st.columns(4); metrics[0].metric("RECORDS",f"{len(filtered):,}"); metrics[1].metric("FIELDS",f"{len(filtered.columns):,}"); metrics[2].metric("DATE / NUMERIC SIGNALS",f"{len(dates)} / {len(numeric)}"); metrics[3].metric("MISSING VALUES",f"{missing_rate:.1%}")
+st.markdown(f'<div class="insight"><strong>{"Data looks sound for exploration." if missing_rate < .05 else "Proceed carefully: missingness may distort conclusions."}</strong><br>{insights(filtered,numeric,dates,categorical,text)}</div>',unsafe_allow_html=True)
 
-st.subheader("Four most relevant views")
-for row_start in range(0, 4, 2):
-    left, right = st.columns(2)
-    for column, (chart, explanation) in zip((left, right), charts_for(filtered, numeric, dates, categorical)[row_start:row_start + 2]):
-        chart.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(21,29,63,.3)", font=dict(color="#f0f9ff", family="Arial, sans-serif"), legend=dict(font=dict(color="#f0f9ff")), margin=dict(l=20, r=20, t=55, b=20), plot_bgcolor_hover="rgba(168, 85, 247, .1)")
-        column.plotly_chart(chart, use_container_width=True); column.caption(explanation)
+with st.expander("Ask the local data assistant",expanded=True):
+    st.caption("This assistant uses rules and statistics from the current filtered data only; it does not call an external AI service.")
+    if "chat_history" not in st.session_state: st.session_state.chat_history=[]
+    for message in st.session_state.chat_history:
+        with st.chat_message(message["role"]): st.markdown(message["content"])
+    question=st.chat_input("Ask about this data or request a chart change…")
+    if question:
+        st.session_state.chat_history.append({"role":"user","content":question})
+        answer=local_answer(question,filtered,numeric,dates,categorical)
+        st.session_state.chat_history.append({"role":"assistant","content":answer})
+        st.rerun()
+
+st.subheader("Focused visual analysis")
+with st.sidebar:
+    st.subheader("Chart controls")
+    chart_type=st.selectbox("Chart type",["Auto","Bar","Line","Scatter","Histogram","Quality"],help="Each chart uses at most one or two fields to stay readable.")
+    x_column=st.selectbox("Category / X field",categorical or ["None"])
+    y_column=st.selectbox("Numeric / Y field",numeric or ["None"])
+    x_column=None if x_column=="None" else x_column; y_column=None if y_column=="None" else y_column
+
+if chart_type == "Auto": charts=charts_for(filtered,numeric,dates,categorical)
+else: charts=[(chart_for(filtered,numeric,dates,categorical,chart_type,x_column,y_column)[0],"User-selected focused chart")]
+for chart, explanation in charts:
+    chart.update_layout(template="plotly_dark",paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(21,29,63,.3)",font=dict(color="#f0f9ff"),legend=dict(font=dict(color="#f0f9ff")),margin=dict(l=20,r=20,t=55,b=20))
+    st.plotly_chart(chart,use_container_width=True); st.caption(explanation)
 
 with st.expander("Attention queue and prepared data"):
-    exception_columns = [c for c in text if c != "Source file"]
+    exception_columns=[c for c in text if c!="Source file"]
     if exception_columns:
-        exception_mask = filtered[exception_columns].fillna("").astype(str).apply(lambda col: col.str.contains(r"unable|await|stand.?by|delay|cancel|no.?show|#REF!", case=False, regex=True)).any(axis=1)
-        queue = filtered.loc[exception_mask].copy(); st.write(f"**{len(queue):,}** rows contain an exception marker in free text or formula errors.")
-        queue_preview = mask_sensitive(queue.head(200), detected_sensitive) if mask_names else queue.head(200)
-        st.dataframe(queue_preview, use_container_width=True, hide_index=True)
+        exception_mask=filtered[exception_columns].fillna("").astype(str).apply(lambda col: col.str.contains(r"unable|await|stand.?by|delay|cancel|no.?show|#REF!",case=False,regex=True)).any(axis=1)
+        queue=filtered.loc[exception_mask]; st.write(f"**{len(queue):,}** rows contain exception markers.")
+        st.dataframe(mask_sensitive(queue.head(200),detected_sensitive) if mask_names else queue.head(200),use_container_width=True,hide_index=True)
     else: st.caption("No free-text exception field was detected.")
-    prepared = mask_sensitive(filtered, detected_sensitive) if mask_names else filtered
-    st.dataframe(prepared.head(500), use_container_width=True, hide_index=True)
-    st.download_button("Download prepared view", prepared.to_csv(index=False).encode("utf-8"), "strategic_analysis_data.csv", "text/csv")
+    prepared=mask_sensitive(filtered,detected_sensitive) if mask_names else filtered
+    st.dataframe(prepared.head(500),use_container_width=True,hide_index=True)
+    st.download_button("Download prepared view",prepared.to_csv(index=False).encode("utf-8"),"strategic_analysis_data.csv","text/csv")
 
-if not using_demo: st.caption("No-BS rule: charts identify patterns; verify the underlying records before making an operational decision.")
+if not using_demo: st.caption("No-BS rule: charts identify patterns; verify underlying records before operational decisions.")
