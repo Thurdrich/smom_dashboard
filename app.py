@@ -9,64 +9,80 @@ import streamlit as st
 
 st.set_page_config(page_title="SMOM | Strategic Insight Studio", page_icon="⚓", layout="wide", initial_sidebar_state="expanded")
 
-# High-contrast navy theme: light surfaces and bright cyan accents keep controls,
-# metrics, chart labels, and body copy legible against the darker shell.
+# Modern futuristic theme: deep blacks, neon purples, electric blues, and glowing accents
 st.markdown("""
 <style>
 :root {
-  --navy-950: #061426;
-  --navy-900: #0a1d36;
-  --navy-800: #102b4d;
-  --navy-700: #173c68;
-  --cyan: #55d6e8;
-  --cyan-soft: #b9f3f7;
-  --ink: #eaf7ff;
-  --muted: #b9d0e4;
+  --black-950: #0a0e27;
+  --black-900: #0f1533;
+  --black-800: #151d3f;
+  --purple-neon: #a855f7;
+  --purple-dark: #7e22ce;
+  --blue-electric: #06b6d4;
+  --blue-bright: #0ea5e9;
+  --pink-accent: #ec4899;
+  --white-text: #f0f9ff;
+  --muted-text: #cbd5e1;
 }
 .stApp {
-  background: linear-gradient(135deg, var(--navy-950) 0%, #0b2748 52%, #123f69 100%);
-  color: var(--ink);
+  background: linear-gradient(135deg, var(--black-950) 0%, #1a1f4b 50%, #2d1b69 100%);
+  color: var(--white-text);
 }
 .block-container { max-width: 1500px; padding-top: 1.5rem; }
 [data-testid="stSidebar"] {
-  background: linear-gradient(180deg, #07182e 0%, #0d2a4b 100%);
-  border-right: 1px solid rgba(132, 224, 239, .28);
+  background: linear-gradient(180deg, var(--black-900) 0%, #1a0f3d 100%);
+  border-right: 2px solid var(--purple-neon);
 }
-[data-testid="stSidebar"] * { color: var(--ink); }
+[data-testid="stSidebar"] * { color: var(--white-text); }
 [data-testid="stMetric"] {
-  background: linear-gradient(145deg, rgba(27, 78, 125, .95), rgba(10, 34, 63, .98));
-  border: 1px solid rgba(119, 226, 239, .42);
-  border-radius: 14px;
-  padding: 14px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+  background: linear-gradient(145deg, rgba(168, 85, 247, .08), rgba(6, 182, 212, .06));
+  border: 2px solid var(--purple-neon);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 0 20px rgba(168, 85, 247, .15), inset 0 0 10px rgba(6, 182, 212, .05);
 }
-[data-testid="stMetricLabel"] { color: var(--cyan-soft) !important; font-weight: 700; }
-[data-testid="stMetricValue"] { color: #ffffff !important; }
+[data-testid="stMetricLabel"] { color: var(--blue-bright) !important; font-weight: 700; font-size: 0.85rem; letter-spacing: 0.05em; text-transform: uppercase; }
+[data-testid="stMetricValue"] { color: #ffffff !important; font-weight: 600; }
 .insight {
-  background: linear-gradient(110deg, rgba(21, 76, 111, .96), rgba(12, 48, 83, .96));
-  border: 1px solid rgba(107, 225, 237, .35);
-  border-left: 5px solid var(--cyan);
-  border-radius: 10px;
-  padding: 14px 18px;
-  color: #f1fbff;
+  background: linear-gradient(110deg, rgba(126, 34, 206, .12), rgba(6, 182, 212, .08));
+  border: 2px solid var(--blue-bright);
+  border-left: 5px solid var(--purple-neon);
+  border-radius: 12px;
+  padding: 16px 20px;
+  color: #e8f4ff;
+  box-shadow: 0 0 15px rgba(6, 182, 212, .1);
 }
-.stMarkdown, .stCaption, [data-testid="stCaptionContainer"] { color: var(--muted); }
-label, .stTextInput label, .stMultiSelect label, .stRadio label { color: var(--ink) !important; }
+.insight strong { color: var(--blue-electric); }
+.stMarkdown, .stCaption, [data-testid="stCaptionContainer"] { color: var(--muted-text); }
+label, .stTextInput label, .stMultiSelect label, .stRadio label { color: var(--white-text) !important; font-weight: 500; }
 .stButton > button, .stDownloadButton > button {
-  background: #1b638f;
+  background: linear-gradient(135deg, var(--purple-neon), var(--pink-accent));
   color: #ffffff;
-  border: 1px solid var(--cyan);
+  border: 1px solid var(--purple-neon);
   border-radius: 8px;
+  font-weight: 600;
+  box-shadow: 0 0 10px rgba(168, 85, 247, .3);
 }
-.stButton > button:hover, .stDownloadButton > button:hover { background: #278aae; color: #ffffff; }
+.stButton > button:hover, .stDownloadButton > button:hover { 
+  background: linear-gradient(135deg, var(--pink-accent), var(--purple-neon));
+  box-shadow: 0 0 20px rgba(168, 85, 247, .5);
+}
 [data-baseweb="select"] > div, [data-baseweb="input"] > div {
-  background: #f5fbff;
-  color: #09223e;
-  border-color: #71dce9;
+  background: rgba(15, 21, 51, .8);
+  color: #f0f9ff;
+  border: 1.5px solid var(--blue-electric) !important;
+  border-radius: 6px;
 }
-[data-baseweb="select"] input, [data-baseweb="select"] span { color: #09223e !important; }
-[data-testid="stExpander"] { border-color: rgba(119, 226, 239, .35); background: rgba(8, 32, 59, .48); }
-h1, h2, h3 { color: #f5fcff !important; letter-spacing: .01em; }
+[data-baseweb="select"] input, [data-baseweb="select"] span, [data-baseweb="input"] input { color: var(--white-text) !important; }
+[data-testid="stExpander"] { 
+  border: 1.5px solid rgba(168, 85, 247, .4); 
+  background: rgba(21, 29, 63, .6);
+  border-radius: 10px;
+}
+[data-testid="stExpander"] summary { color: var(--blue-bright) !important; font-weight: 600; }
+h1, h2, h3 { color: #ffffff !important; letter-spacing: .02em; text-shadow: 0 0 10px rgba(168, 85, 247, .3); }
+h1 { font-size: 2.5rem; font-weight: 700; }
+h2 { font-size: 1.8rem; font-weight: 600; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -160,33 +176,34 @@ def best_category(data, categorical):
 
 def charts_for(data, numeric, dates, categorical):
     charts, category = [], best_category(data, categorical)
+    neon_palette = ["#a855f7", "#06b6d4", "#ec4899", "#0ea5e9", "#f43f5e", "#8b5cf6"]
     if category:
         counts = clean_label(data[category]).value_counts().head(15).sort_values()
-        charts.append((px.bar(counts, x=counts.values, y=counts.index, orientation="h", title=f"Composition by {category}", color_discrete_sequence=["#55d6e8"]), f"Largest segments in {category}"))
-    elif numeric: charts.append((px.histogram(data, x=numeric[0], nbins=24, title=f"Distribution of {numeric[0]}", color_discrete_sequence=["#55d6e8"]), f"Distribution of {numeric[0]}"))
-    else: charts.append((px.bar(x=["Rows"], y=[len(data)], title="Record count", color_discrete_sequence=["#55d6e8"]), "Record count"))
+        charts.append((px.bar(counts, x=counts.values, y=counts.index, orientation="h", title=f"Composition by {category}", color_discrete_sequence=["#a855f7"]), f"Largest segments in {category}"))
+    elif numeric: charts.append((px.histogram(data, x=numeric[0], nbins=24, title=f"Distribution of {numeric[0]}", color_discrete_sequence=["#06b6d4"]), f"Distribution of {numeric[0]}"))
+    else: charts.append((px.bar(x=["Rows"], y=[len(data)], title="Record count", color_discrete_sequence=["#0ea5e9"]), "Record count"))
     if dates:
         events = [pd.DataFrame({"Date": parse_dates(data[col], col), "Event": col}) for col in dates[:8]]
         event_frame = pd.concat(events, ignore_index=True).dropna()
         if not event_frame.empty:
             by_day = event_frame.groupby(["Date", "Event"]).size().reset_index(name="Records")
-            charts.append((px.line(by_day, x="Date", y="Records", color="Event", markers=True, title="Milestones and events over time", color_discrete_sequence=["#55d6e8", "#ffcf70", "#a8a1ff", "#ff8fa3"]), "Date fields detected; timeline shows operational flow."))
-        else: charts.append((px.bar(x=["No valid dates"], y=[0], title="Timeline unavailable", color_discrete_sequence=["#55d6e8"]), "Date columns were detected but could not be parsed."))
-    elif len(numeric) >= 2: charts.append((px.scatter(data, x=numeric[0], y=numeric[1], title=f"Relationship: {numeric[0]} vs {numeric[1]}", color_discrete_sequence=["#55d6e8"]), "Numeric relationship"))
-    else: charts.append((px.bar(x=["No time field"], y=[len(data)], title="No time field detected", color_discrete_sequence=["#55d6e8"]), "Add a date field for trend analysis."))
+            charts.append((px.line(by_day, x="Date", y="Records", color="Event", markers=True, title="Milestones and events over time", color_discrete_sequence=neon_palette), "Date fields detected; timeline shows operational flow."))
+        else: charts.append((px.bar(x=["No valid dates"], y=[0], title="Timeline unavailable", color_discrete_sequence=["#a855f7"]), "Date columns were detected but could not be parsed."))
+    elif len(numeric) >= 2: charts.append((px.scatter(data, x=numeric[0], y=numeric[1], title=f"Relationship: {numeric[0]} vs {numeric[1]}", color_discrete_sequence=["#06b6d4"]), "Numeric relationship"))
+    else: charts.append((px.bar(x=["No time field"], y=[len(data)], title="No time field detected", color_discrete_sequence=["#0ea5e9"]), "Add a date field for trend analysis."))
     if category and numeric:
         metric = numeric[0]
         grouped = data.assign(_category=clean_label(data[category]), _metric=pd.to_numeric(data[metric], errors="coerce"))
         grouped = grouped.groupby("_category", as_index=False)["_metric"].agg(["mean", "count"]).reset_index().sort_values("mean").tail(15)
-        charts.append((px.bar(grouped, x="mean", y="_category", orientation="h", text="count", title=f"Average {metric} by {category}", color_discrete_sequence=["#ffcf70"]), f"Comparison of {metric} across {category}"))
+        charts.append((px.bar(grouped, x="mean", y="_category", orientation="h", text="count", title=f"Average {metric} by {category}", color_discrete_sequence=["#ec4899"]), f"Comparison of {metric} across {category}"))
     elif len(numeric) >= 2:
         corr = data[numeric].corr(numeric_only=True).round(2)
-        charts.append((px.imshow(corr, text_auto=True, color_continuous_scale=[[0, "#173c68"], [.5, "#f5fbff"], [1, "#e48b75"]], zmin=-1, zmax=1, title="Numeric signals moving together"), "Correlation view"))
+        charts.append((px.imshow(corr, text_auto=True, color_continuous_scale=[[0, "#7e22ce"], [.5, "#0f1533"], [1, "#06b6d4"]], zmin=-1, zmax=1, title="Numeric signals moving together"), "Correlation view"))
     else:
         missing = data.isna().mean().sort_values().tail(12).sort_values()
-        charts.append((px.bar(x=missing.values, y=missing.index, orientation="h", title="Missingness by field", color_discrete_sequence=["#ffcf70"]), "Data completeness"))
+        charts.append((px.bar(x=missing.values, y=missing.index, orientation="h", title="Missingness by field", color_discrete_sequence=["#f43f5e"]), "Data completeness"))
     missing = data.isna().mean().sort_values().tail(15).sort_values()
-    charts.append((px.bar(x=missing.values, y=missing.index, orientation="h", range_x=[0, 1], title="Data quality: missing values by field", color_discrete_sequence=["#ffcf70"]), "Prioritize fields with high missingness before acting."))
+    charts.append((px.bar(x=missing.values, y=missing.index, orientation="h", range_x=[0, 1], title="Data quality: missing values by field", color_discrete_sequence=["#f43f5e"]), "Prioritize fields with high missingness before acting."))
     return charts[:4]
 
 
@@ -258,7 +275,7 @@ st.subheader("Four most relevant views")
 for row_start in range(0, 4, 2):
     left, right = st.columns(2)
     for column, (chart, explanation) in zip((left, right), charts_for(filtered, numeric, dates, categorical)[row_start:row_start + 2]):
-        chart.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(7,24,46,.35)", font=dict(color="#eaf7ff"), legend=dict(font=dict(color="#eaf7ff")), margin=dict(l=20, r=20, t=55, b=20))
+        chart.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(21,29,63,.3)", font=dict(color="#f0f9ff", family="Arial, sans-serif"), legend=dict(font=dict(color="#f0f9ff")), margin=dict(l=20, r=20, t=55, b=20), plot_bgcolor_hover="rgba(168, 85, 247, .1)")
         column.plotly_chart(chart, use_container_width=True); column.caption(explanation)
 
 with st.expander("Attention queue and prepared data"):
