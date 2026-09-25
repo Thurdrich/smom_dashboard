@@ -7,25 +7,17 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-st.set_page_config(
-    page_title="SMOM | Strategic Insight Studio",
-    page_icon="⚓",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="SMOM | Strategic Insight Studio", page_icon="⚓", layout="wide", initial_sidebar_state="expanded")
 
-st.markdown(
-    """
-    <style>
-    .stApp { background: radial-gradient(circle at top right,#123d61 0,#071a2f 42%,#061322 100%); color:#edf6ff; }
-    .block-container { max-width:1500px; padding-top:1.5rem; }
-    [data-testid="stSidebar"] { background:rgba(5,18,34,.96); border-right:1px solid rgba(255,255,255,.08); }
-    [data-testid="stMetric"] { background:linear-gradient(145deg,rgba(31,76,111,.72),rgba(10,32,55,.9)); border:1px solid rgba(115,192,224,.18); border-radius:14px; padding:14px; }
-    .insight { background:rgba(22,65,92,.58); border-left:4px solid #49c6c8; border-radius:8px; padding:14px 18px; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<style>
+.stApp { background: radial-gradient(circle at top right,#123d61 0,#071a2f 42%,#061322 100%); color:#edf6ff; }
+.block-container { max-width:1500px; padding-top:1.5rem; }
+[data-testid="stSidebar"] { background:rgba(5,18,34,.96); border-right:1px solid rgba(255,255,255,.08); }
+[data-testid="stMetric"] { background:linear-gradient(145deg,rgba(31,76,111,.72),rgba(10,32,55,.9)); border:1px solid rgba(115,192,224,.18); border-radius:14px; padding:14px; }
+.insight { background:rgba(22,65,92,.58); border-left:4px solid #49c6c8; border-radius:8px; padding:14px 18px; }
+</style>
+""", unsafe_allow_html=True)
 
 SUPPORTED_TYPES = ["csv", "xlsx", "xls", "json", "parquet", "xml"]
 DATE_WORDS = ("date", "dt", "day", "time", "start", "end", "arrival", "departure", "request", "created", "received", "distributed")
@@ -37,12 +29,7 @@ def demo_data():
     dates = pd.date_range(end=pd.Timestamp.today().normalize(), periods=180, freq="D")
     workload = rng.normal(72, 18, 180).clip(10, 140).round(1)
     staffing = (workload * rng.normal(.91, .12, 180)).clip(5, 150).round(1)
-    return pd.DataFrame({
-        "Date": dates, "Region": rng.choice(["North", "South", "East", "West"], 180),
-        "Workload": workload, "Staffing": staffing,
-        "Readiness": (100 - (workload - staffing).clip(0) * 1.7).clip(35, 100).round(1),
-        "Priority": rng.choice(["Routine", "Elevated", "Critical"], 180, p=[.55, .3, .15]),
-    })
+    return pd.DataFrame({"Date": dates, "Region": rng.choice(["North", "South", "East", "West"], 180), "Workload": workload, "Staffing": staffing, "Readiness": (100 - (workload - staffing).clip(0) * 1.7).clip(35, 100).round(1), "Priority": rng.choice(["Routine", "Elevated", "Critical"], 180, p=[.55, .3, .15])})
 
 
 @st.cache_data(show_spinner=False)
@@ -82,10 +69,22 @@ def load_uploads(files):
 
 
 def parse_dates(series, column_name=""):
+    """Parse dates without allowing one malformed value to crash profiling."""
     clean = series.replace({"": np.nan, "#REF!": np.nan, "STAND BY": np.nan})
-    # `infer_datetime_format` was deprecated in pandas 2 and removed in newer
-    # pandas releases. Date inference is now the default behavior.
-    parsed = pd.to_datetime(clean, errors="coerce")
+    try:
+        parsed = pd.to_datetime(clean, errors="coerce")
+    except (TypeError, ValueError, OverflowError):
+        # Mixed objects (for example dates plus lists/dicts) can still make
+        # vectorized parsing fail. Parse each scalar independently instead.
+        def parse_one(value):
+            if pd.isna(value) if not isinstance(value, (list, tuple, dict, set)) else False:
+                return pd.NaT
+            try:
+                return pd.to_datetime(value, errors="coerce")
+            except (TypeError, ValueError, OverflowError):
+                return pd.NaT
+        parsed = clean.map(parse_one)
+
     # Excel serial dates sometimes arrive as numbers in CSV exports.
     if parsed.notna().mean() < .7 and pd.api.types.is_numeric_dtype(clean):
         numeric = pd.to_numeric(clean, errors="coerce")
@@ -133,7 +132,6 @@ def best_category(data, categorical):
 def charts_for(data, numeric, dates, categorical):
     charts = []
     category = best_category(data, categorical)
-    # 1: composition/status is more useful than a generic first-column chart.
     if category:
         counts = clean_label(data[category]).value_counts().head(15).sort_values()
         charts.append((px.bar(counts, x=counts.values, y=counts.index, orientation="h", title=f"Composition by {category}"), f"Largest segments in {category}"))
@@ -141,13 +139,8 @@ def charts_for(data, numeric, dates, categorical):
         charts.append((px.histogram(data, x=numeric[0], nbins=24, title=f"Distribution of {numeric[0]}"), f"Distribution of {numeric[0]}"))
     else:
         charts.append((px.bar(x=["Rows"], y=[len(data)], title="Record count"), "Record count"))
-
-    # 2: all date fields are stacked into a milestone/event timeline.
     if dates:
-        events = []
-        for col in dates[:8]:
-            parsed = parse_dates(data[col], col)
-            events.append(pd.DataFrame({"Date": parsed, "Event": col}))
+        events = [pd.DataFrame({"Date": parse_dates(data[col], col), "Event": col}) for col in dates[:8]]
         event_frame = pd.concat(events, ignore_index=True).dropna()
         if not event_frame.empty:
             by_day = event_frame.groupby(["Date", "Event"]).size().reset_index(name="Records")
@@ -158,12 +151,10 @@ def charts_for(data, numeric, dates, categorical):
         charts.append((px.scatter(data, x=numeric[0], y=numeric[1], title=f"Relationship: {numeric[0]} vs {numeric[1]}"), "Numeric relationship"))
     else:
         charts.append((px.bar(x=["No time field"], y=[len(data)], title="No time field detected"), "Add a date field for trend analysis."))
-
-    # 3: compare the most useful segment against a numeric signal, if available.
     if category and numeric:
         metric = numeric[0]
         grouped = data.assign(_category=clean_label(data[category]), _metric=pd.to_numeric(data[metric], errors="coerce"))
-        grouped = grouped.groupby("_category", as_index=False)['_metric'].agg(['mean', 'count']).reset_index().sort_values('mean').tail(15)
+        grouped = grouped.groupby("_category", as_index=False)["_metric"].agg(["mean", "count"]).reset_index().sort_values("mean").tail(15)
         charts.append((px.bar(grouped, x="mean", y="_category", orientation="h", text="count", title=f"Average {metric} by {category}"), f"Comparison of {metric} across {category}"))
     elif len(numeric) >= 2:
         corr = data[numeric].corr(numeric_only=True).round(2)
@@ -171,8 +162,6 @@ def charts_for(data, numeric, dates, categorical):
     else:
         missing = data.isna().mean().sort_values().tail(12).sort_values()
         charts.append((px.bar(x=missing.values, y=missing.index, orientation="h", title="Missingness by field"), "Data completeness"))
-
-    # 4 is deliberately always data quality: it prevents overconfident analysis.
     missing = data.isna().mean().sort_values().tail(15).sort_values()
     charts.append((px.bar(x=missing.values, y=missing.index, orientation="h", range_x=[0, 1], title="Data quality: missing values by field"), "Prioritize fields with high missingness before acting."))
     return charts[:4]
@@ -201,7 +190,6 @@ def insights(data, numeric, dates, categorical, text):
 
 
 def sensitive_columns(frame):
-    """Return columns whose names suggest they may contain personal identifiers."""
     return [column for column in frame.columns if re.search(SENSITIVE_WORDS, str(column), re.I)]
 
 
@@ -221,30 +209,18 @@ with st.sidebar:
 uploaded_data, errors = load_uploads(uploads)
 using_demo = uploaded_data.empty
 analysis_data = demo_data() if using_demo else uploaded_data
-
-# Scan the schema first, then let the user decide how identifier-like fields are shown.
 detected_sensitive = [] if using_demo else sensitive_columns(analysis_data)
 mask_names = True
 if detected_sensitive:
-    st.warning(
-        "Potential personal identifiers were detected in the uploaded schema. "
-        "Masking is recommended before displaying previews or downloading prepared data. "
-        "The choice below only controls display/export masking; the uploaded values remain in-session for analysis."
-    )
+    st.warning("Potential personal identifiers were detected in the uploaded schema. Masking is recommended before displaying previews or downloading prepared data.")
     st.write("Detected fields: " + ", ".join(f"`{column}`" for column in detected_sensitive))
-    masking_choice = st.radio(
-        "How should these fields be handled in previews and downloads?",
-        ("Mask detected fields (recommended)", "Continue without masking"),
-        index=0,
-        key="sensitive_data_choice",
-    )
+    masking_choice = st.radio("How should these fields be handled in previews and downloads?", ("Mask detected fields (recommended)", "Continue without masking"), index=0, key="sensitive_data_choice")
     mask_names = masking_choice.startswith("Mask")
     if not mask_names:
         st.info("You chose to continue without masking. Make sure you are authorized to view and export these identifiers.")
 
 numeric, dates, categorical, text = profile(analysis_data)
 
-# Add focused filters rather than forcing the user to understand the schema.
 with st.sidebar:
     filter_columns = [c for c in categorical if 1 < analysis_data[c].nunique(dropna=True) <= 20][:4]
     selected = {}
@@ -272,7 +248,6 @@ metrics[0].metric("RECORDS", f"{len(filtered):,}")
 metrics[1].metric("FIELDS", f"{len(filtered.columns):,}")
 metrics[2].metric("DATE / NUMERIC SIGNALS", f"{len(dates)} / {len(numeric)}")
 metrics[3].metric("MISSING VALUES", f"{missing_rate:.1%}")
-
 quality = "Data looks sound for exploration." if missing_rate < .05 else "Proceed carefully: missingness or malformed values can distort conclusions."
 st.markdown(f'<div class="insight"><strong>{quality}</strong><br>{insights(filtered, numeric, dates, categorical, text)}</div>', unsafe_allow_html=True)
 
@@ -284,7 +259,6 @@ for row_start in range(0, 4, 2):
         column.plotly_chart(chart, use_container_width=True)
         column.caption(explanation)
 
-# A practical attention queue for incomplete/exception-heavy operational rows.
 with st.expander("Attention queue and prepared data"):
     exception_columns = [c for c in text if c != "Source file"]
     if exception_columns:
