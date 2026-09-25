@@ -1,36 +1,24 @@
 # SMOM Dashboard
 
-This repository contains a Streamlit dashboard for the Strategic Manpower Optimization Model.
+SMOM Dashboard is now a general-purpose Streamlit **Strategic Insight Studio**. Upload one or more tabular datasets and the app automatically profiles them, offers a data-soundness note, and selects four adaptive charts to reveal trends, concentrations, relationships, and outliers.
 
-## Deployment
+## Supported uploads
 
-The app entrypoint is `app.py`. Streamlit Cloud can deploy this repository directly.
+- CSV (`.csv`)
+- Excel (`.xlsx`, `.xls`)
+- JSON (`.json`)
 
-### Streamlit Cloud setup
+Multiple files can be uploaded at once. They are combined by column name, with a `Source file` field added so the result remains traceable. Before an upload, the app displays an illustrative preview dataset.
 
-1. Connect your GitHub repository `Thurdrich/smom_dashboard` to Streamlit Cloud.
-2. Choose the `main` branch.
-3. Set the app file path to `app.py`.
-4. Optionally add Streamlit secrets in the app settings:
-   - `admin_password`
-   - `latiimer_password`
-
-### Local launch
+## Run locally
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Notes
+The Streamlit app entrypoint is `app.py`. Streamlit Cloud can deploy the `main` branch directly and will refresh after the commit is built.
 
-- The app now searches for the dataset file automatically using one of these names:
-  - `clean_mcs.csv`
-  - `CLEANED_JOINED_MODEL CRIT SCORE_DATA.csv`
-  - `CLEANED_JOINED_MODEL CRIT SCORE_DATA.csv.csv`
-- If you already have `smomdashboard.streamlit.app`, the app should update automatically when you push to `main`.
+## How the analysis works
 
-## GitHub CI
-
-A GitHub Actions workflow is included at `.github/workflows/streamlit-ci.yml`.
-It installs dependencies and validates `app.py` on each push or pull request to `main`.
+The dashboard detects numeric, categorical, and date-like fields without requiring a particular schema. It then generates four views from the available signals: a trend or distribution, a grouped comparison or relationship, a correlation heatmap or composition view, and a time/category mix or outlier view. The strategic note is exploratory guidance—not a substitute for validating the source data or operational context.

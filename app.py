@@ -1,21 +1,17 @@
-from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
 st.set_page_config(
-    page_title="SMOM | Movement & Manpower Command Center",
+    page_title="SMOM | Strategic Insight Studio",
     page_icon="⚓",
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-BASE_DIR = Path(__file__).resolve().parent
-ARRIVAL_FILES = ["MEFMT_arrival_data (1).csv", "clean_mcs.csv", "MEFMT_data (1).xlsx", "Epic Fury Data"]
-MODEL_FILES = ["CLEANED_JOINED_MODEL CRIT SCORE_DATA.csv"]
 
 st.markdown(
     """
@@ -24,254 +20,180 @@ st.markdown(
     .block-container { max-width:1500px; padding-top:1.5rem; }
     [data-testid="stSidebar"] { background:rgba(5,18,34,.96); border-right:1px solid rgba(255,255,255,.08); }
     [data-testid="stMetric"] { background:linear-gradient(145deg,rgba(31,76,111,.72),rgba(10,32,55,.9)); border:1px solid rgba(115,192,224,.18); border-radius:14px; padding:14px; }
+    .insight { background:rgba(22,65,92,.58); border-left:4px solid #49c6c8; border-radius:8px; padding:14px 18px; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-STATUS_COLORS = {
-    "ON LOCATION": "#27ae60", "ARRIVED": "#27ae60", "PENDING": "#f39c12",
-    "TRAVEL CONFIRMED": "#2980b9", "CANCELLED": "#c0392b", "NO SHOW": "#8e44ad",
-    "IN TRANSIT": "#00a6b2", "STANDBY": "#8e44ad", "UNKNOWN": "#718096",
-}
+SUPPORTED_TYPES = ["csv", "xlsx", "xls", "json"]
+DEMO_ROWS = 180
 
 
-def first_existing(names):
-    return next((BASE_DIR / name for name in names if (BASE_DIR / name).exists()), None)
-
-
-def clean_columns(data):
-    data = data.copy()
-    data.columns = [str(c).strip() for c in data.columns]
-    aliases = {
-        "CIVMAR/PER": "PERSON", "EXT STATUS": "EXT_STATUS", "IN/OUT": "IN_OUT",
-        "DATE 1": "DATE_1", "DATE 2": "DATE_2", "COMMENTS & ACTIONS": "COMMENTS",
-        "Personnel_Type": "PERSONNEL_TYPE", "Pay_Grade_Level": "PAY_GRADE_LEVEL",
-        "Model_Criticality_Score": "CRITICALITY_SCORE",
-        "Platform": "PLATFORM", "Job_Specialty": "JOB_SPECIALTY",
-        "Onboard": "ONBOARD", "Gap": "GAP",
-    }
-    data = data.rename(columns=aliases)
-    for column in data.columns:
-        if data[column].dtype == "object":
-            data[column] = data[column].replace(r"^\s*$", pd.NA, regex=True)
-            data[column] = data[column].astype("string").str.strip()
-    return data
-
-
-def clean_arrivals(data):
-    data = clean_columns(data)
-    required = {"STATUS", "PERSON", "VESSEL", "LOCATION"}
-    missing = required - set(data.columns)
-    if missing:
-        raise ValueError("Arrival data is missing: " + ", ".join(sorted(missing)))
-    date_columns = ["START", "DATE_1", "DATE_2", "DOA", "DUE OFF DT", "LILP DATE"]
-    for column in date_columns:
-        if column in data:
-            data[column] = pd.to_datetime(data[column], errors="coerce")
-    for column in ["STATUS", "EXT_STATUS", "SEX", "RATING", "VESSEL", "LOCATION", "IN_OUT", "COMMENTS"]:
-        if column in data:
-            data[column] = data[column].fillna("Unknown").astype(str).str.strip().str.upper()
-    data["STATUS"] = data["STATUS"].replace({"": "UNKNOWN", "NAN": "UNKNOWN"})
-    data["PERSON"] = data["PERSON"].fillna("Unknown").astype(str).str.strip()
-    data["SUCCESS"] = data["STATUS"].isin(["ARRIVED", "ON LOCATION"]).astype(int)
-    data.insert(0, "SOURCE_ROW", range(2, len(data) + 2))
-    return data
-
-
-def clean_model(data):
-    data = clean_columns(data)
-    required = {"PERSONNEL_TYPE", "BSO", "PLATFORM", "JOB_SPECIALTY", "BA", "ONBOARD", "GAP", "CRITICALITY_SCORE"}
-    missing = required - set(data.columns)
-    if missing:
-        raise ValueError("Manpower model data is missing: " + ", ".join(sorted(missing)))
-    numeric = ["BA", "ONBOARD", "GAP", "CRITICALITY_SCORE"]
-    for column in numeric:
-        data[column] = pd.to_numeric(data[column], errors="coerce")
-    for column in data.columns:
-        if data[column].dtype == "object" or str(data[column].dtype) == "string":
-            data[column] = data[column].fillna("Unknown").astype(str).str.strip()
-    data["STAFFING_STATE"] = data["GAP"].map(lambda value: "Shortage" if value > 0 else ("Surplus" if value < 0 else "Balanced"))
-    return data
-
-
-@st.cache_data
-def read_file(path_str, uploaded_bytes=None, uploaded_name=""):
-    if uploaded_bytes is not None:
-        stream = BytesIO(uploaded_bytes)
-        raw = pd.read_excel(stream) if uploaded_name.lower().endswith((".xlsx", ".xls")) else pd.read_csv(stream)
-    else:
-        path = Path(path_str)
-        raw = pd.read_excel(path) if path.suffix.lower() in (".xlsx", ".xls") else pd.read_csv(path)
-    return raw
-
-
-def text_col(data, column):
-    return data[column].fillna("Unknown").astype(str).str.upper() if column in data else pd.Series("UNKNOWN", index=data.index)
-
-
-arrival_path = first_existing(ARRIVAL_FILES)
-model_path = first_existing(MODEL_FILES)
-
-with st.sidebar:
-    st.header("Mission filters")
-    arrival_upload = st.file_uploader("Replace arrival data", type=["csv", "xlsx", "xls"])
-    model_upload = st.file_uploader("Replace manpower model", type=["csv", "xlsx", "xls"])
-
-try:
-    arrivals_raw = read_file(str(arrival_path), arrival_upload.getvalue() if arrival_upload else None, arrival_upload.name if arrival_upload else "") if arrival_path or arrival_upload else None
-    model_raw = read_file(str(model_path), model_upload.getvalue() if model_upload else None, model_upload.name if model_upload else "") if model_path or model_upload else None
-    arrivals = clean_arrivals(arrivals_raw) if arrivals_raw is not None else pd.DataFrame()
-    model = clean_model(model_raw) if model_raw is not None else pd.DataFrame()
-except (ValueError, pd.errors.ParserError, KeyError) as exc:
-    st.error(f"Data validation failed: {exc}")
-    st.stop()
-
-if arrivals.empty and model.empty:
-    st.error("No supported dataset was found. Add the arrival CSV and/or manpower model CSV to the repository.")
-    st.stop()
-
-st.title("⚓ SMOM Movement & Manpower Command Center")
-st.caption("Cleaned arrival tracking, staffing gaps, and model criticality in one view")
-
-with st.sidebar:
-    st.divider()
-    if not arrivals.empty:
-        status_filter = st.selectbox("Arrival status", ["ALL"] + sorted(text_col(arrivals, "STATUS").unique()))
-        vessel_filter = st.selectbox("Arrival vessel", ["ALL"] + sorted(text_col(arrivals, "VESSEL").unique()))
-    else:
-        status_filter = vessel_filter = "ALL"
-
-filtered_arrivals = arrivals.copy()
-if status_filter != "ALL":
-    filtered_arrivals = filtered_arrivals[text_col(filtered_arrivals, "STATUS") == status_filter]
-if vessel_filter != "ALL":
-    filtered_arrivals = filtered_arrivals[text_col(filtered_arrivals, "VESSEL") == vessel_filter]
-
-if not arrivals.empty:
-    counts = text_col(filtered_arrivals, "STATUS").value_counts()
-    success_rate = filtered_arrivals["SUCCESS"].mean() * 100 if len(filtered_arrivals) else 0
-    metrics = [
-        ("ARRIVAL RECORDS", len(filtered_arrivals)),
-        ("SUCCESSFUL ARRIVALS", int(filtered_arrivals["SUCCESS"].sum())),
-        ("SUCCESS RATE", f"{success_rate:.1f}%"),
-        ("PENDING", int(counts.get("PENDING", 0))),
-        ("TRAVEL CONFIRMED", int(counts.get("TRAVEL CONFIRMED", 0))),
-    ]
-    for column, (label, value) in zip(st.columns(len(metrics)), metrics):
-        column.metric(label, value)
-
-st.divider()
-
-if not arrivals.empty:
-    st.subheader("Arrival operations")
-    status_df = text_col(filtered_arrivals, "STATUS").value_counts().rename_axis("Status").reset_index(name="Count")
-    status_fig = px.bar(status_df, x="Status", y="Count", color="Status", color_discrete_map=STATUS_COLORS, title="Arrival status")
-    status_fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False)
-    st.plotly_chart(status_fig, use_container_width=True)
-
-    st.subheader("Arrival analytics")
-    vessel_success = (
-        filtered_arrivals.groupby("VESSEL", dropna=False)["SUCCESS"]
-        .agg(["mean", "count"])
-        .reset_index()
-    )
-    vessel_success["Success rate (%)"] = vessel_success["mean"] * 100
-    vessel_success = vessel_success.sort_values(
-        ["Success rate (%)", "count"], ascending=[False, False]
-    ).head(12)
-
-    location_success = (
-        filtered_arrivals.groupby("LOCATION", dropna=False)["SUCCESS"]
-        .agg(["mean", "count"])
-        .reset_index()
-    )
-    location_success["Success rate (%)"] = location_success["mean"] * 100
-    location_success = location_success.sort_values(
-        ["Success rate (%)", "count"], ascending=[False, False]
-    ).head(12)
-
-    vessel_col, location_col = st.columns(2)
-    success_fig = px.bar(
-        vessel_success,
-        x="Success rate (%)",
-        y="VESSEL",
-        orientation="h",
-        color="Success rate (%)",
-        color_continuous_scale="Viridis",
-        hover_data={"count": True, "mean": False},
-        title="Arrival success rate by vessel",
-    )
-    success_fig.update_xaxes(range=[0, 100])
-    success_fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-    )
-    vessel_col.plotly_chart(success_fig, use_container_width=True)
-
-    location_fig = px.bar(
-        location_success,
-        x="Success rate (%)",
-        y="LOCATION",
-        orientation="h",
-        color="Success rate (%)",
-        color_continuous_scale="Tealgrn",
-        hover_data={"count": True, "mean": False},
-        title="Arrival success rate by location",
-    )
-    location_fig.update_xaxes(range=[0, 100])
-    location_fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-    )
-    location_col.plotly_chart(location_fig, use_container_width=True)
-
-if not model.empty:
-    st.subheader("Manpower model")
-    model_left, model_right = st.columns(2)
-    gap_summary = model.groupby("BSO", dropna=False)[["BA", "ONBOARD"]].sum().reset_index()
-    gap_summary["Net gap"] = gap_summary["BA"] - gap_summary["ONBOARD"]
-    gap_fig = px.bar(gap_summary.sort_values("Net gap"), x="BSO", y="Net gap", color="Net gap", color_continuous_scale="RdYlGn", title="Net staffing gap by BSO")
-    gap_fig.add_hline(y=0, line_dash="dash", line_color="white")
-    gap_fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-    model_left.plotly_chart(gap_fig, use_container_width=True)
-
-    criticality = model.groupby("JOB_SPECIALTY", dropna=False)["CRITICALITY_SCORE"].mean().reset_index().sort_values("CRITICALITY_SCORE", ascending=False)
-    criticality_fig = px.bar(criticality.head(12), x="CRITICALITY_SCORE", y="JOB_SPECIALTY", orientation="h", color="CRITICALITY_SCORE", color_continuous_scale="Magma", title="Average criticality by specialty")
-    criticality_fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-    model_right.plotly_chart(criticality_fig, use_container_width=True)
-
-st.divider()
-tab_arrivals, tab_model, tab_quality = st.tabs(["📋 Clean arrival roster", "📊 Clean manpower model", "✅ Data quality"])
-
-with tab_arrivals:
-    if arrivals.empty:
-        st.info("No arrival dataset loaded.")
-    else:
-        view = filtered_arrivals.copy()
-        for column in view.columns:
-            if pd.api.types.is_datetime64_any_dtype(view[column]):
-                view[column] = view[column].dt.strftime("%Y-%m-%d")
-        st.dataframe(view, use_container_width=True, hide_index=True)
-        st.download_button("Download cleaned arrivals", view.to_csv(index=False).encode("utf-8"), "cleaned_arrivals.csv", "text/csv")
-
-with tab_model:
-    if model.empty:
-        st.info("No manpower model dataset loaded.")
-    else:
-        st.dataframe(model, use_container_width=True, hide_index=True)
-        st.download_button("Download cleaned manpower model", model.to_csv(index=False).encode("utf-8"), "cleaned_manpower_model.csv", "text/csv")
-
-with tab_quality:
-    st.write({
-        "arrival_source": arrival_upload.name if arrival_upload else (arrival_path.name if arrival_path else "not loaded"),
-        "arrival_rows": len(arrivals),
-        "arrival_columns": len(arrivals.columns),
-        "model_source": model_upload.name if model_upload else (model_path.name if model_path else "not loaded"),
-        "model_rows": len(model),
-        "model_columns": len(model.columns),
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+def demo_data():
+    """A useful preview that makes the app understandable before an upload."""
+    rng = np.random.default_rng(7)
+    dates = pd.date_range(end=pd.Timestamp.today().normalize(), periods=DEMO_ROWS, freq="D")
+    regions = rng.choice(["North", "South", "East", "West"], DEMO_ROWS)
+    workload = rng.normal(72, 18, DEMO_ROWS).clip(10, 140).round(1)
+    staffing = (workload * rng.normal(0.91, 0.12, DEMO_ROWS)).clip(5, 150).round(1)
+    return pd.DataFrame({
+        "Date": dates, "Region": regions, "Workload": workload,
+        "Staffing": staffing, "Readiness": (100 - (workload - staffing).clip(0) * 1.7).clip(35, 100).round(1),
+        "Priority": rng.choice(["Routine", "Elevated", "Critical"], DEMO_ROWS, p=[.55, .3, .15]),
     })
-    st.info("Blank text fields are standardized to Unknown, dates are parsed safely, numeric model fields are coerced, and derived success/staffing-state fields are added.")
+
+
+@st.cache_data(show_spinner=False)
+def read_upload(file_name, file_bytes):
+    suffix = Path(file_name).suffix.lower()
+    stream = BytesIO(file_bytes)
+    if suffix == ".csv":
+        return pd.read_csv(stream)
+    if suffix in {".xlsx", ".xls"}:
+        return pd.read_excel(stream)
+    if suffix == ".json":
+        return pd.read_json(stream)
+    raise ValueError(f"Unsupported file type: {suffix}")
+
+
+def load_uploads(files):
+    frames = []
+    errors = []
+    for uploaded in files or []:
+        try:
+            frame = read_upload(uploaded.name, uploaded.getvalue()).copy()
+            frame.columns = [str(c).strip() or f"Column {i + 1}" for i, c in enumerate(frame.columns)]
+            frame["Source file"] = uploaded.name
+            frames.append(frame)
+        except Exception as exc:  # show one bad file without losing valid files
+            errors.append(f"{uploaded.name}: {exc}")
+    if not frames:
+        return pd.DataFrame(), errors
+    return pd.concat(frames, ignore_index=True, sort=False), errors
+
+
+def profile(data):
+    numeric = data.select_dtypes(include="number").columns.tolist()
+    dates = []
+    for column in data.columns:
+        if column == "Source file" or pd.api.types.is_numeric_dtype(data[column]):
+            continue
+        parsed = pd.to_datetime(data[column], errors="coerce")
+        if parsed.notna().mean() >= 0.7:
+            dates.append(column)
+    categorical = [c for c in data.columns if c not in numeric and c not in dates]
+    return numeric, dates, categorical
+
+
+def chart_frame(data, numeric, dates, categorical):
+    """Build four adaptive charts; each one gracefully falls back for sparse data."""
+    charts = []
+    if dates and numeric:
+        date_col, value_col = dates[0], numeric[0]
+        frame = data[[date_col, value_col]].copy()
+        frame[date_col] = pd.to_datetime(frame[date_col], errors="coerce")
+        frame = frame.dropna().sort_values(date_col)
+        charts.append(px.line(frame, x=date_col, y=value_col, markers=True, title=f"Trend of {value_col}"))
+    elif numeric:
+        charts.append(px.histogram(data, x=numeric[0], nbins=24, title=f"Distribution of {numeric[0]}"))
+    else:
+        counts = data[categorical[0]].fillna("Missing").astype(str).value_counts().head(15) if categorical else pd.Series([len(data)], index=["Rows"])
+        charts.append(px.bar(counts.sort_values(), orientation="h", title="Most common segments"))
+
+    if categorical and numeric:
+        group = data.assign(_group=data[categorical[0]].fillna("Missing").astype(str)).groupby("_group", as_index=False)[numeric[0]].mean().sort_values(numeric[0]).tail(12)
+        charts.append(px.bar(group, x=numeric[0], y="_group", orientation="h", title=f"Average {numeric[0]} by {categorical[0]}"))
+    elif len(numeric) >= 2:
+        charts.append(px.scatter(data, x=numeric[0], y=numeric[1], title=f"Relationship: {numeric[0]} vs {numeric[1]}"))
+    else:
+        charts.append(px.bar(data.head(15), title="Uploaded records (preview)"))
+
+    if len(numeric) >= 2:
+        corr = data[numeric].corr(numeric_only=True).round(2)
+        charts.append(px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r", zmin=-1, zmax=1, title="Signals moving together"))
+    elif categorical:
+        counts = data[categorical[-1]].fillna("Missing").astype(str).value_counts().head(12).sort_values()
+        charts.append(px.bar(counts, orientation="h", title=f"Composition of {categorical[-1]}"))
+    else:
+        charts.append(px.histogram(data, x=numeric[0] if numeric else data.columns[0], title="Record profile"))
+
+    if dates and categorical:
+        date_col, group_col = dates[0], categorical[0]
+        frame = data[[date_col, group_col]].copy()
+        frame[date_col] = pd.to_datetime(frame[date_col], errors="coerce")
+        frame = frame.dropna()
+        trend = frame.assign(Period=frame[date_col].dt.to_period("M").astype(str)).groupby(["Period", group_col], as_index=False).size()
+        charts.append(px.area(trend, x="Period", y="size", color=group_col, title=f"{group_col} mix over time"))
+    elif categorical:
+        counts = data[categorical[0]].fillna("Missing").astype(str).value_counts().head(12).sort_values()
+        charts.append(px.bar(counts, orientation="h", title=f"Top {categorical[0]} values"))
+    else:
+        charts.append(px.box(data, y=numeric[0] if numeric else data.columns[0], title="Range and outliers"))
+    return charts[:4]
+
+
+def insight_text(data, numeric, dates, categorical, missing_rate):
+    parts = []
+    if numeric:
+        column = numeric[0]
+        values = pd.to_numeric(data[column], errors="coerce").dropna()
+        if len(values) > 2:
+            parts.append(f"**{column}** spans {values.min():,.2f}–{values.max():,.2f}; the highest 10% of records average {values.quantile(.9):,.2f}, which may identify a concentrated priority segment.")
+    if categorical:
+        column = categorical[0]
+        share = data[column].fillna("Missing").astype(str).value_counts(normalize=True).iloc[0] * 100
+        parts.append(f"The largest **{column}** segment represents {share:.1f}% of records—check whether that concentration reflects demand, coverage, or a reporting bias.")
+    if dates:
+        parts.append(f"A time field (**{dates[0]}**) was detected, so the trend view can expose changes that a static summary would hide.")
+    if not parts:
+        parts.append("The file is too sparse for a strong directional finding yet; add more rows or descriptive fields to unlock comparisons.")
+    quality = "Data looks sound for exploratory analysis." if missing_rate < .05 else "Some cleaning is recommended before decisions: missing values or inconsistent fields may affect comparisons."
+    return quality, " ".join(parts)
+
+
+with st.sidebar:
+    st.header("Upload your data")
+    uploads = st.file_uploader("Add one or more datasets", type=SUPPORTED_TYPES, accept_multiple_files=True, help="CSV, Excel, and JSON files are supported. Files are combined for analysis.")
+    st.caption("Your files are analyzed in this session and are not written back to the repository.")
+
+uploaded_data, errors = load_uploads(uploads)
+using_demo = uploaded_data.empty
+analysis_data = demo_data() if using_demo else uploaded_data
+numeric, dates, categorical = profile(analysis_data)
+missing_rate = float(analysis_data.isna().mean().mean()) if not analysis_data.empty else 0
+
+st.title("⚓ Strategic Insight Studio")
+st.caption("Upload almost any tabular dataset and receive four adaptive views designed to surface operational signals.")
+if using_demo:
+    st.info("Preview mode: this is an illustrative dataset. Upload one or more files to generate insights from your data.")
+else:
+    st.success(f"Analyzing {len(uploads)} file(s), {len(analysis_data):,} rows, and {len(analysis_data.columns):,} fields.")
+for error in errors:
+    st.warning(error)
+
+metrics = st.columns(4)
+metrics[0].metric("RECORDS", f"{len(analysis_data):,}")
+metrics[1].metric("FIELDS", f"{len(analysis_data.columns):,}")
+metrics[2].metric("NUMERIC SIGNALS", len(numeric))
+metrics[3].metric("MISSING VALUES", f"{missing_rate:.1%}")
+
+quality, strategic = insight_text(analysis_data, numeric, dates, categorical, missing_rate)
+st.markdown(f'<div class="insight"><strong>{quality}</strong><br>{strategic}</div>', unsafe_allow_html=True)
+st.divider()
+
+st.subheader("Four most relevant views")
+charts = chart_frame(analysis_data, numeric, dates, categorical)
+for row_start in range(0, 4, 2):
+    left, right = st.columns(2)
+    for column, chart in zip((left, right), charts[row_start:row_start + 2]):
+        chart.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=20, r=20, t=55, b=20))
+        column.plotly_chart(chart, use_container_width=True)
+
+with st.expander("Review prepared data"):
+    st.caption("The table below is the combined analysis view. Use it to verify that your files were interpreted as expected.")
+    st.dataframe(analysis_data.head(500), use_container_width=True, hide_index=True)
+    st.download_button("Download combined view", analysis_data.to_csv(index=False).encode("utf-8"), "strategic_analysis_data.csv", "text/csv")
+
+if not using_demo:
+    st.caption("Tip: Start with the highest or lowest groups in the charts, then filter the source data to validate the story before acting.")
