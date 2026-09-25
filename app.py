@@ -83,7 +83,9 @@ def load_uploads(files):
 
 def parse_dates(series, column_name=""):
     clean = series.replace({"": np.nan, "#REF!": np.nan, "STAND BY": np.nan})
-    parsed = pd.to_datetime(clean, errors="coerce", infer_datetime_format=True)
+    # `infer_datetime_format` was deprecated in pandas 2 and removed in newer
+    # pandas releases. Date inference is now the default behavior.
+    parsed = pd.to_datetime(clean, errors="coerce")
     # Excel serial dates sometimes arrive as numbers in CSV exports.
     if parsed.notna().mean() < .7 and pd.api.types.is_numeric_dtype(clean):
         numeric = pd.to_numeric(clean, errors="coerce")
