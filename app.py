@@ -1,3 +1,23 @@
+from io import BytesIO
+from pathlib import Path
+import re
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+
+st.set_page_config(
+    page_title="SMOM Interactive",
+    page_icon="⚓",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+AS_OF_DATE = pd.Timestamp("2026-09-25")
+
+SUPPORTED_TYPES = ["csv", "xlsx", "xls", "json", "parquet", "xml"]
 @st.cache_data(show_spinner=False)
 def read_upload(file_name, file_bytes):
     suffix = Path(file_name).suffix.lower()
