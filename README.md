@@ -1,14 +1,17 @@
 # SMOM Dashboard
 
-SMOM Dashboard is now a general-purpose Streamlit **Strategic Insight Studio**. Upload one or more tabular datasets and the app automatically profiles them, offers a data-soundness note, and selects four adaptive charts to reveal trends, concentrations, relationships, and outliers.
+SMOM Dashboard is a domain-neutral Streamlit **Strategic Insight Studio**. Upload one or more tabular datasets and the app profiles the approved fields, selects four useful views, and produces direct observations, data-quality gaps, and potential-risk signals.
 
-## Supported uploads
+## Privacy-first workflow
 
-- CSV (`.csv`)
-- Excel (`.xlsx`, `.xls`)
-- JSON (`.json`)
+- Supported uploads: CSV, XLSX/XLS, JSON, Parquet, and XML.
+- Direct identifiers such as addresses, phone numbers, emails, employee/personnel IDs, and similar fields are detected and omitted before profiling by default.
+- Name-like fields are owner-controlled. The data owner can permit names for the current session or omit them.
+- The visible **Privacy report** shows what was omitted, why it was detected, and what remains available to analysis.
+- Only the approved/sanitized frame is used for charts, findings, the data preview, and downloads.
+- Uploaded files are processed in-session and are not written to the repository.
 
-Multiple files can be uploaded at once. They are combined by column name, with a `Source file` field added so the result remains traceable. Before an upload, the app displays an illustrative preview dataset.
+This application privacy boundary does not replace deployment authentication, HTTPS, authorization, storage controls, or a managed secret store. For a public deployment, put authentication in front of Streamlit using the hosting provider or an identity-aware proxy (for example OAuth/OIDC, Microsoft Entra ID, Cloudflare Access, or an equivalent service).
 
 ## Run locally
 
@@ -17,8 +20,6 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-The Streamlit app entrypoint is `app.py`. Streamlit Cloud can deploy the `main` branch directly and will refresh after the commit is built.
+## Analysis behavior
 
-## How the analysis works
-
-The dashboard detects numeric, categorical, and date-like fields without requiring a particular schema. It then generates four views from the available signals: a trend or distribution, a grouped comparison or relationship, a correlation heatmap or composition view, and a time/category mix or outlier view. The strategic note is exploratory guidance—not a substitute for validating the source data or operational context.
+The app detects numeric, date-like, categorical, and text fields without assuming a business domain. It generates four adaptive views: composition/distribution, timeline or relationship, segment comparison, and missingness/data quality. It also surfaces exception-like text, duplicate-style gaps, malformed values, concentration, and missingness where the data supports those findings. The output is deliberately descriptive and flags findings for validation rather than inventing business meaning.
