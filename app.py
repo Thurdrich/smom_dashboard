@@ -28,8 +28,39 @@ st.markdown(
 )
 
 SUPPORTED_TYPES = ["csv", "xlsx", "xls", "json", "parquet", "xml"]
-DATE_WORDS = ("date", "dt", "day", "time", "start", "end", "arrival", "departure", "request", "created", "received", "distributed")
-SENSITIVE_NAME_WORDS = ("address", "street", "phone", "mobile", "telephone", "email", "e-mail", "ssn", "social security", "employee id", "employee number", "personnel id", "personnel number", "badge", "passport", "account", "routing")
+DATE_WORDS = (
+    "date",
+    "dt",
+    "day",
+    "time",
+    "start",
+    "end",
+    "arrival",
+    "departure",
+    "request",
+    "created",
+    "received",
+    "distributed",
+)
+SENSITIVE_NAME_WORDS = (
+    "address",
+    "street",
+    "phone",
+    "mobile",
+    "telephone",
+    "email",
+    "e-mail",
+    "ssn",
+    "social security",
+    "employee id",
+    "employee number",
+    "personnel id",
+    "personnel number",
+    "badge",
+    "passport",
+    "account",
+    "routing",
+)
 NAME_WORDS = ("name", "first", "last", "employee", "person", "contact")
 EXCEPTION_PATTERN = r"unable|await|stand.?by|delay|cancel|no.?show|#REF!"
 
@@ -84,7 +115,9 @@ def load_uploads(files):
             frames.append(frame)
         except Exception as exc:
             errors.append(f"{uploaded.name}: {exc}")
-    return (pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()), errors
+    if not frames:
+        return pd.DataFrame(), errors
+    return pd.concat(frames, ignore_index=True, sort=False), errors
 
 
 def parse_dates(series):
@@ -134,7 +167,7 @@ def profile(data):
             continue
         series = data[column]
         non_null = series.dropna()
-        if not len(non_null):
+        if non_null.empty:
             categorical.append(column)
             continue
         numeric_candidate = pd.to_numeric(non_null.astype(str).str.replace(",", "", regex=False), errors="coerce")
@@ -154,62 +187,74 @@ def profile(data):
 
 def best_category(data, categorical):
     usable = [c for c in categorical if 2 <= data[c].nunique(dropna=True) <= min(30, max(5, len(data) // 2))]
-    return sorted(usable, key=lambda c: (data[c].nunique(), len(str(c))))[0] if usable else (categorical[0] if categorical else None)
+    preferred = ("status", "location", "ship", "vessel", "arrival", "departure", "employee", "type")
+    return sorted(usable, key=lambda c: (not any(k in c.lower() for k in preferred), data[c].nunique()))[0] if usable else (categorical[0] if categorical else None)
 
 
-def make_charts(data, numeric, dates, categorical):
+def charts_for(data, numeric, dates, categorical):
     charts = []
     category = best_category(data, categorical)
     if category:
         counts = clean_label(data[category]).value_counts().head(15).sort_values()
-        charts.append((px.bar(x=counts.values, y=counts.index, orientation="h", title=f"Composition by {category}"), "Largest segments."))
+        charts.append((px.bar(counts, x=counts.values, y=counts.index, orientation="h", title=f"Composition by {category}"), f"Largest segments in {category}"))
     elif numeric:
-        charts.append((px.histogram(data, x=numeric[0], nbins=24, title=f"Distribution of {numeric[0]}"), "Distribution and concentration."))
+        charts.append((px.histogram(data, x=numeric[0], nbins=24, title=f"Distribution of {numeric[0]}"), f"Distribution of {numeric[0]}"))
     else:
-        charts.append((px.bar(x=["Rows"], y=[len(data)], title="Record count"), "Record count."))
+        charts.append((px.bar(x=["Rows"], y=[len(data)], title="Record count"), "Record count"))
 
     if dates:
-        events = pd.concat([pd.DataFrame({"Date": parse_dates(data[c]), "Event": c}) for c in dates[:8]], ignore_index=True).dropna()
-        timeline = events.groupby(["Date", "Event"]).size().reset_index(name="Records")
-        charts.append((px.line(timeline, x="Date", y="Records", color="Event", markers=True, title="Detected milestones over time"), "Date sequencing and activity."))
+        events = []
+        for col in dates[:8]:
+            parsed = parse_dates(data[col])
+            events.append(pd.DataFrame({"Date": parsed, "Event": col}))
+        event_frame = pd.concat(events, ignore_index=True).dropna()
+        if not event_frame.empty:
+            by_day = event_frame.groupby(["Date", "Event"]).size().reset_index(name="Records")
+            charts.append((px.line(by_day, x="Date", y="Records", color="Event", markers=True, title="Milestones and events over time"), "Date fields detected; timeline shows operational flow."))
+        else:
+            charts.append((px.bar(x=["No valid dates"], y=[0], title="Timeline unavailable"), "Date columns were detected but could not be parsed."))
     elif len(numeric) >= 2:
-        charts.append((px.scatter(data, x=numeric[0], y=numeric[1], title=f"Relationship: {numeric[0]} vs {numeric[1]}"), "Potential relationship; correlation is not causation."))
+        charts.append((px.scatter(data, x=numeric[0], y=numeric[1], title=f"Relationship: {numeric[0]} vs {numeric[1]}"), "Numeric relationship"))
     else:
-        charts.append((px.bar(x=["No time field"], y=[len(data)], title="No time field detected"), "No defensible trend available."))
+        charts.append((px.bar(x=["No time field"], y=[len(data)], title="No time field detected"), "Add a date field for trend analysis."))
 
     if category and numeric:
         metric = numeric[0]
-        grouped = data.assign(_category=clean_label(data[category]), _metric=pd.to_numeric(data[metric], errors="coerce")).groupby("_category", as_index=False)["_metric"].mean().sort_values("_metric")
-        charts.append((px.bar(grouped, x="_metric", y="_category", orientation="h", title=f"Average {metric} by {category}"), "Segment comparison."))
+        grouped = data.assign(_category=clean_label(data[category]), _metric=pd.to_numeric(data[metric], errors="coerce"))
+        grouped = grouped.groupby("_category", as_index=False)["_metric"].mean().sort_values("_metric").tail(15)
+        charts.append((px.bar(grouped, x="_metric", y="_category", orientation="h", title=f"Average {metric} by {category}"), f"Comparison of {metric} across {category}"))
     elif len(numeric) >= 2:
-        charts.append((px.imshow(data[numeric].corr().round(2), text_auto=True, color_continuous_scale="RdBu_r", zmin=-1, zmax=1, title="Numeric signals moving together"), "Relationship screening."))
+        corr = data[numeric].corr().round(2)
+        charts.append((px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r", zmin=-1, zmax=1, title="Numeric signals moving together"), "Correlation view"))
     else:
-        charts.append((px.bar(x=[1], y=[1], title="No numeric comparison available"), "Add numeric fields for comparison."))
+        missing = data.isna().mean().sort_values().tail(12).sort_values()
+        charts.append((px.bar(x=missing.values, y=missing.index, orientation="h", title="Missingness by field"), "Data completeness"))
 
     missing = data.isna().mean().sort_values().tail(15).sort_values()
-    charts.append((px.bar(x=missing.values, y=missing.index, orientation="h", range_x=[0, 1], title="Data quality: missing values"), "Prioritize cleanup before decisions."))
+    charts.append((px.bar(x=missing.values, y=missing.index, orientation="h", range_x=[0, 1], title="Data quality: missing values by field"), "Prioritize fields with high missingness before acting."))
     return charts[:4]
 
 
-def findings(data, numeric, dates, categorical, text):
-    items = []
+def insights(data, numeric, dates, categorical, text):
+    findings = []
     if categorical:
         category = best_category(data, categorical)
         counts = clean_label(data[category]).value_counts()
         if len(counts):
-            items.append(f"**Observation:** `{counts.index[0]}` is the largest `{category}` segment at **{counts.iloc[0] / len(data):.1%}**.")
+            findings.append(f"**{counts.index[0]}** is the largest `{category}` segment at **{counts.iloc[0] / len(data):.1%}** of records.")
+    if dates:
+        date_col = dates[0]
+        parsed = parse_dates(data[date_col]).dropna()
+        if len(parsed):
+            findings.append(f"`{date_col}` spans **{parsed.min():%Y-%m-%d} to {parsed.max():%Y-%m-%d}**; use the timeline to validate sequencing and bottlenecks.")
     missing = data.isna().mean().sort_values(ascending=False)
     if len(missing) and missing.iloc[0] >= 0.25:
-        items.append(f"**Data-quality gap:** `{missing.index[0]}` is missing in **{missing.iloc[0]:.1%}** of records.")
-    if dates:
-        valid = pd.concat([parse_dates(data[c]) for c in dates], ignore_index=True).dropna()
-        if len(valid):
-            items.append(f"**Coverage:** detected date values span **{valid.min():%Y-%m-%d} to {valid.max():%Y-%m-%d}**.")
+        findings.append(f"Data-quality risk: **{missing.index[0]}** is missing in **{missing.iloc[0]:.1%}** of rows.")
     if text:
-        mask = data[text].fillna("").astype(str).apply(lambda col: col.str.contains(EXCEPTION_PATTERN, case=False, regex=True)).any(axis=1)
-        if mask.any():
-            items.append(f"**Potential risk:** **{int(mask.sum())}** records contain exception-like text or formula errors; review them before acting.")
-    return " ".join(items) or "**Needs validation:** the available structure is insufficient for a directional finding."
+        keyword_hits = data[text].fillna("").astype(str).apply(lambda s: s.str.contains(EXCEPTION_PATTERN, case=False, regex=True).sum()).sum()
+        if keyword_hits:
+            findings.append(f"The free-text fields contain **{int(keyword_hits)}** operational exception markers; review the attention queue below.")
+    return " ".join(findings) or "Not enough structure for a directional finding; validate the source schema first."
 
 
 def mask_sensitive(frame):
@@ -223,9 +268,11 @@ def mask_sensitive(frame):
 with st.sidebar:
     st.header("Upload data")
     uploads = st.file_uploader("Add one or more datasets", type=SUPPORTED_TYPES, accept_multiple_files=True)
+    mask_names = st.checkbox("Mask personal names in the preview", value=True)
     st.divider()
     st.subheader("Privacy review")
     show_names = st.checkbox("Names may be visible in this session", value=True)
+    st.caption("Supported: CSV, Excel, JSON, Parquet, XML. Files are analyzed in-session and are not written back to the repository.")
 
 uploaded_data, errors = load_uploads(uploads)
 using_demo = uploaded_data.empty
@@ -241,10 +288,10 @@ numeric, dates, categorical, text = profile(analysis_data)
 
 with st.sidebar:
     filter_columns = [c for c in categorical if 1 < analysis_data[c].nunique(dropna=True) <= 20][:4]
-    selected = {
-        c: st.multiselect(c, sorted(clean_label(analysis_data[c]).unique()), default=sorted(clean_label(analysis_data[c]).unique()))
-        for c in filter_columns
-    }
+    selected = {}
+    for column in filter_columns:
+        values = sorted(clean_label(analysis_data[column]).unique().tolist())
+        selected[column] = st.multiselect(column, values, default=values)
 
 filtered = analysis_data.copy()
 for column, values in selected.items():
@@ -254,11 +301,11 @@ for column, values in selected.items():
 missing_rate = float(filtered.isna().mean().mean()) if not filtered.empty else 0
 
 st.title("⚓ Strategic Insight Studio")
-st.caption("Domain-neutral analysis with a visible privacy review before any chart or finding is produced.")
+st.caption("Upload a tabular dataset. The app profiles it, filters it, identifies operational risk, and selects four decision-useful views while exposing a privacy review.")
 if using_demo:
-    st.info("Preview mode: upload a dataset to replace the illustrative data.")
+    st.info("Preview mode: upload your file to replace the illustrative data.")
 else:
-    st.success(f"Analyzing {len(uploads)} file(s), {len(filtered):,} filtered records, and {len(filtered.columns):,} approved fields.")
+    st.success(f"Analyzing {len(uploads)} file(s), {len(filtered):,} filtered rows, and {len(filtered.columns):,} approved fields.")
 for error in errors:
     st.warning(error)
 
@@ -275,26 +322,32 @@ with st.expander("Privacy report", expanded=bool(omitted or name_candidates)):
 metrics = st.columns(4)
 metrics[0].metric("RECORDS", f"{len(filtered):,}")
 metrics[1].metric("APPROVED FIELDS", f"{len(filtered.columns):,}")
-metrics[2].metric("DATE / NUMERIC", f"{len(dates)} / {len(numeric)}")
+metrics[2].metric("DATE / NUMERIC SIGNALS", f"{len(dates)} / {len(numeric)}")
 metrics[3].metric("MISSING VALUES", f"{missing_rate:.1%}")
+
 quality = "Data looks sound for exploration." if missing_rate < 0.05 else "Proceed carefully: missingness or malformed values can distort conclusions."
-st.markdown(f'<div class="insight"><strong>{quality}</strong><br>{findings(filtered, numeric, dates, categorical, text)}</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="insight"><strong>{quality}</strong><br>{insights(filtered, numeric, dates, categorical, text)}</div>', unsafe_allow_html=True)
 
 st.subheader("Four most relevant views")
-charts = make_charts(filtered, numeric, dates, categorical)
 for row_start in range(0, 4, 2):
     left, right = st.columns(2)
-    for column, (chart, explanation) in zip((left, right), charts[row_start:row_start + 2]):
+    for column, (chart, explanation) in zip((left, right), charts_for(filtered, numeric, dates, categorical)[row_start:row_start + 2]):
         chart.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=20, r=20, t=55, b=20))
         column.plotly_chart(chart, use_container_width=True)
         column.caption(explanation)
 
-with st.expander("Review approved data and attention queue"):
-    if text:
-        exception_mask = filtered[text].fillna("").astype(str).apply(lambda col: col.str.contains(EXCEPTION_PATTERN, case=False, regex=True)).any(axis=1)
-        st.write(f"**{int(exception_mask.sum()):,}** approved records contain exception-like text or formula errors.")
-        st.dataframe(filtered.loc[exception_mask].head(200), use_container_width=True, hide_index=True)
-    st.dataframe(filtered.head(500), use_container_width=True, hide_index=True)
+with st.expander("Attention queue and prepared data"):
+    exception_columns = [c for c in text if c != "Source file"]
+    if exception_columns:
+        mask = filtered[exception_columns].fillna("").astype(str).apply(lambda col: col.str.contains(EXCEPTION_PATTERN, case=False, regex=True)).any(axis=1)
+        queue = filtered.loc[mask].copy()
+        st.write(f"**{len(queue):,}** rows contain an exception marker in free text or formula errors.")
+        st.dataframe(mask_sensitive(queue.head(200)) if mask_names else queue.head(200), use_container_width=True, hide_index=True)
+    else:
+        st.caption("No free-text exception field was detected.")
+    prepared = mask_sensitive(filtered) if mask_names else filtered
+    st.dataframe(prepared.head(500), use_container_width=True, hide_index=True)
     st.download_button("Download approved/sanitized view", filtered.to_csv(index=False).encode("utf-8"), "strategic_analysis_data.csv", "text/csv")
 
-st.caption("No-BS rule: findings identify patterns and gaps; validate source records before making decisions.")
+if not using_demo:
+    st.caption("No-BS rule: charts identify patterns; verify the underlying records before making an operational decision.")
