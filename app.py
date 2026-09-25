@@ -29,6 +29,7 @@ st.markdown(
 
 SUPPORTED_TYPES = ["csv", "xlsx", "xls", "json", "parquet", "xml"]
 DATE_WORDS = ("date", "dt", "day", "time", "start", "end", "arrival", "departure", "request", "created", "received", "distributed")
+SENSITIVE_WORDS = r"name|employee|person|lname|fname|first.?name|last.?name|civmar.?/per"
 
 
 def demo_data():
@@ -197,23 +198,48 @@ def insights(data, numeric, dates, categorical, text):
     return " ".join(findings) or "Not enough structure for a directional finding; validate the source schema first."
 
 
-def mask_sensitive(frame):
+def sensitive_columns(frame):
+    """Return columns whose names suggest they may contain personal identifiers."""
+    return [column for column in frame.columns if re.search(SENSITIVE_WORDS, str(column), re.I)]
+
+
+def mask_sensitive(frame, columns=None):
     result = frame.copy()
-    for column in result.columns:
-        if re.search(r"name|employee|person|lname|fname|civmar.?/per", str(column), re.I):
-            result[column] = result[column].notna().map({True: "[present]", False: "[missing]"})
+    columns = sensitive_columns(result) if columns is None else columns
+    for column in columns:
+        result[column] = result[column].notna().map({True: "[present]", False: "[missing]"})
     return result
 
 
 with st.sidebar:
     st.header("Upload your data")
     uploads = st.file_uploader("Add one or more datasets", type=SUPPORTED_TYPES, accept_multiple_files=True)
-    mask_names = st.checkbox("Mask personal names in the preview", value=True)
     st.caption("Supported: CSV, Excel, JSON, Parquet, XML. Files are analyzed in-session.")
 
 uploaded_data, errors = load_uploads(uploads)
 using_demo = uploaded_data.empty
 analysis_data = demo_data() if using_demo else uploaded_data
+
+# Scan the schema first, then let the user decide how identifier-like fields are shown.
+detected_sensitive = [] if using_demo else sensitive_columns(analysis_data)
+mask_names = True
+if detected_sensitive:
+    st.warning(
+        "Potential personal identifiers were detected in the uploaded schema. "
+        "Masking is recommended before displaying previews or downloading prepared data. "
+        "The choice below only controls display/export masking; the uploaded values remain in-session for analysis."
+    )
+    st.write("Detected fields: " + ", ".join(f"`{column}`" for column in detected_sensitive))
+    masking_choice = st.radio(
+        "How should these fields be handled in previews and downloads?",
+        ("Mask detected fields (recommended)", "Continue without masking"),
+        index=0,
+        key="sensitive_data_choice",
+    )
+    mask_names = masking_choice.startswith("Mask")
+    if not mask_names:
+        st.info("You chose to continue without masking. Make sure you are authorized to view and export these identifiers.")
+
 numeric, dates, categorical, text = profile(analysis_data)
 
 # Add focused filters rather than forcing the user to understand the schema.
@@ -260,15 +286,16 @@ for row_start in range(0, 4, 2):
 with st.expander("Attention queue and prepared data"):
     exception_columns = [c for c in text if c != "Source file"]
     if exception_columns:
-        mask = filtered[exception_columns].fillna("").astype(str).apply(lambda col: col.str.contains(r"unable|await|stand.?by|delay|cancel|no.?show|#REF!", case=False, regex=True)).any(axis=1)
-        queue = filtered.loc[mask].copy()
+        exception_mask = filtered[exception_columns].fillna("").astype(str).apply(lambda col: col.str.contains(r"unable|await|stand.?by|delay|cancel|no.?show|#REF!", case=False, regex=True)).any(axis=1)
+        queue = filtered.loc[exception_mask].copy()
         st.write(f"**{len(queue):,}** rows contain an exception marker in free text or formula errors.")
-        st.dataframe(mask_sensitive(queue.head(200)) if mask_names else queue.head(200), use_container_width=True, hide_index=True)
+        queue_preview = mask_sensitive(queue.head(200), detected_sensitive) if mask_names else queue.head(200)
+        st.dataframe(queue_preview, use_container_width=True, hide_index=True)
     else:
         st.caption("No free-text exception field was detected.")
-    prepared = mask_sensitive(filtered) if mask_names else filtered
+    prepared = mask_sensitive(filtered, detected_sensitive) if mask_names else filtered
     st.dataframe(prepared.head(500), use_container_width=True, hide_index=True)
-    st.download_button("Download prepared view", filtered.to_csv(index=False).encode("utf-8"), "strategic_analysis_data.csv", "text/csv")
+    st.download_button("Download prepared view", prepared.to_csv(index=False).encode("utf-8"), "strategic_analysis_data.csv", "text/csv")
 
 if not using_demo:
     st.caption("No-BS rule: charts identify patterns; verify the underlying records before making an operational decision.")
