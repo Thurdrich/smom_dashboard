@@ -1,6 +1,6 @@
-# SMOM Manpower & Travel Readiness Dashboard
+# SMOM Predictive Insight Dashboard
 
-SMOM Dashboard is a Streamlit **Manpower & Travel Readiness Studio** for maritime operations. Upload one or more manpower/travel datasets and the app profiles them, highlights readiness signals, and selects four adaptive charts to reveal trends, concentrations, relationships, and outliers.
+SMOM Dashboard is a Streamlit **Predictive Insight Studio**. Upload one or more datasets and the app profiles them, scores prediction readiness, and selects four adaptive charts to reveal trends, concentrations, relationships, and outliers.
 
 ## Supported uploads
 
@@ -8,7 +8,7 @@ SMOM Dashboard is a Streamlit **Manpower & Travel Readiness Studio** for maritim
 - Excel (`.xlsx`, `.xls`)
 - JSON (`.json`)
 
-Multiple files can be uploaded at once. They are combined by column name, with a `Source file` field added so the result remains traceable. The app only analyzes uploaded data (no demo/preview fallback dataset).
+Multiple files can be uploaded at once. They are combined by column name, with a `Source file` field added so the result remains traceable. The app only analyzes uploaded data locally (no demo/preview fallback dataset and no external data transfer).
 
 ## Run locally
 
@@ -21,4 +21,4 @@ The Streamlit app entrypoint is `app.py`. Streamlit Cloud can deploy the `main` 
 
 ## How the analysis works
 
-The dashboard detects numeric, categorical, and date-like fields without requiring a particular schema. It then generates four views from the available signals: a trend or distribution, a grouped comparison or relationship, a correlation heatmap or composition view, and a time/category mix or outlier view. The strategic note is exploratory guidance—not a substitute for validating the source data or operational context.
+The dashboard detects numeric, categorical, and date-like fields without requiring a particular schema. It then generates four views from available signals and supports an optional focused chart, including a field-level signal-strength view. The app also reports a prediction-readiness score based on data coverage, schema richness, trendability, and signal density. Recommendations and assistant responses are generated from the active filtered dataset only.
