@@ -419,7 +419,7 @@ def best_trend_columns(data, numeric, dates):
 
 
 def confidence_label(sample_size, missingness, signal_strength):
-    if sample_size < 10 or missingness >= .55:
+    if sample_size < 10 or missingness >= .35:
         return "Low"
 
     score = 0
@@ -440,7 +440,7 @@ def confidence_label(sample_size, missingness, signal_strength):
         score += 1
 
     if score >= 5:
-        return "High"
+        return "Medium" if missingness >= .2 else "High"
 
     if score >= 3:
         return "Medium"
@@ -606,7 +606,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                 if operations["workload"].notna().any()
                 else 0
             )
-            threshold = max(2.0, workload_mean * .08)
+            threshold = max(2.0, abs(workload_mean) * .08)
             readiness_mean = (
                 float(operations["readiness"].mean())
                 if operations["readiness"].notna().any()
@@ -1531,11 +1531,14 @@ else "Proceed carefully: missingness may distort conclusions."}
 
 
 st.subheader("Recommended actions")
-recommendation_columns = st.columns(2)
+st.markdown(
+    '<div role="list" aria-label="Recommended actions">',
+    unsafe_allow_html=True,
+)
 
-for index, recommendation in enumerate(recommendations[:4]):
+for recommendation in recommendations[:4]:
     recommendation_html = f"""
-    <div class="recommendation-card">
+    <article class="recommendation-card" role="listitem">
         <h4>{html.escape(recommendation["title"])}</h4>
         <p><strong>Insight:</strong> {html.escape(recommendation["insight"])}</p>
         <p><strong>Suggested action:</strong> {html.escape(recommendation["action"])}</p>
@@ -1543,14 +1546,17 @@ for index, recommendation in enumerate(recommendations[:4]):
         <span class="recommendation-confidence">
             Confidence: {html.escape(recommendation["confidence"])}
         </span>
-    </div>
+    </article>
     """
+    st.markdown(
+        recommendation_html,
+        unsafe_allow_html=True,
+    )
 
-    with recommendation_columns[index % 2]:
-        st.markdown(
-            recommendation_html,
-            unsafe_allow_html=True,
-        )
+st.markdown(
+    "</div>",
+    unsafe_allow_html=True,
+)
 
 
 with st.expander("Ask the local data assistant", expanded=True):
