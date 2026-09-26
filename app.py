@@ -303,99 +303,189 @@ def chart_for(
     x_column=None,
     y_column=None,
 ):
-    category = x_column or best_category(data, categorical)
-    metric = y_column or (numeric[0] if numeric else None)
+    category = (
+        x_column
+        if x_column in data.columns
+        else best_category(data, categorical)
+    )
+    metric = (
+        y_column
+        if y_column in data.columns
+        else (numeric[0] if numeric else None)
+    )
 
-    if chart_type == "Auto":
-        chart_type = (
-            "Bar"
-            if category
-            else ("Histogram" if metric else "Record count")
-        )
+    def fallback_count(reason):
+        if (
+            "Source file" in data.columns
+            and data["Source file"].nunique(dropna=True) > 1
+        ):
+            source_counts = (
+                clean_label(data["Source file"])
+                .value_counts()
+                .sort_values()
+            )
 
-    if chart_type == "Bar" and category:
-        counts = (
-            clean_label(data[category])
-            .value_counts()
-            .head(12)
-            .sort_values()
+            return (
+                px.bar(
+                    source_counts,
+                    x=source_counts.values,
+                    y=source_counts.index,
+                    orientation="h",
+                    title="Record count by source file",
+                    color_discrete_sequence=["#a855f7"],
+                ),
+                f"{reason} Showing counts by source file instead.",
+            )
+
+        summary = pd.DataFrame(
+            {
+                "Metric": ["Records", "Fields"],
+                "Value": [len(data), len(data.columns)],
+            }
         )
 
         return (
             px.bar(
-                counts,
-                x=counts.values,
-                y=counts.index,
-                orientation="h",
-                title=f"Composition by {category}",
-                color_discrete_sequence=["#a855f7"],
-            ),
-            f"Top segments in {category}",
-        )
-
-    if chart_type == "Line" and dates and metric:
-        frame = pd.DataFrame(
-            {
-                "Date": parse_dates(data[dates[0]]),
-                "Value": pd.to_numeric(
-                    data[metric],
-                    errors="coerce",
-                ),
-            }
-        ).dropna().sort_values("Date")
-
-        return (
-            px.line(
-                frame,
-                x="Date",
+                summary,
+                x="Metric",
                 y="Value",
-                markers=True,
-                title=f"{metric} over {dates[0]}",
-                color_discrete_sequence=["#06b6d4"],
+                title="Filtered dataset summary",
+                color="Metric",
+                color_discrete_map={
+                    "Records": "#06b6d4",
+                    "Fields": "#a855f7",
+                },
             ),
-            "Trend using one date and one numeric field",
+            f"{reason} Showing a dataset summary instead.",
         )
 
-    if chart_type == "Scatter" and len(numeric) >= 2:
-        x = x_column or numeric[0]
-        y = y_column or numeric[1]
+    if chart_type == "Auto":
+        chart_type = "Bar" if category else ("Histogram" if metric else "Count")
 
-        return (
-            px.scatter(
-                data,
-                x=x,
-                y=y,
-                title=f"{x} vs {y}",
-                color_discrete_sequence=["#ec4899"],
-            ),
-            "Relationship between two numeric fields",
+    try:
+        if chart_type == "Bar" and category:
+            counts = (
+                clean_label(data[category])
+                .value_counts()
+                .head(12)
+                .sort_values()
+            )
+
+            if len(counts):
+                return (
+                    px.bar(
+                        counts,
+                        x=counts.values,
+                        y=counts.index,
+                        orientation="h",
+                        title=f"Composition by {category}",
+                        color_discrete_sequence=["#a855f7"],
+                    ),
+                    f"Top segments in {category}",
+                )
+
+        if chart_type == "Line" and dates and metric:
+            date_column = (
+                x_column if x_column in dates else dates[0]
+            )
+            frame = pd.DataFrame(
+                {
+                    "Date": parse_dates(data[date_column]),
+                    "Value": pd.to_numeric(
+                        data[metric],
+                        errors="coerce",
+                    ),
+                }
+            ).dropna().sort_values("Date")
+
+            if len(frame):
+                trend = (
+                    frame.set_index("Date")
+                    .resample("W")
+                    .mean(numeric_only=True)
+                    .dropna()
+                    .reset_index()
+                )
+                chart_frame = trend if len(trend) >= 3 else frame
+
+                return (
+                    px.line(
+                        chart_frame,
+                        x="Date",
+                        y="Value",
+                        markers=True,
+                        title=f"{metric} over {date_column}",
+                        color_discrete_sequence=["#06b6d4"],
+                    ),
+                    "Time trend from one date and one numeric field",
+                )
+
+        if chart_type == "Scatter" and len(numeric) >= 2:
+            x = x_column if x_column in numeric else numeric[0]
+            y = y_column if y_column in numeric else numeric[1]
+            if x == y and len(numeric) >= 2:
+                y = numeric[1]
+
+            frame = pd.DataFrame(
+                {
+                    x: pd.to_numeric(data[x], errors="coerce"),
+                    y: pd.to_numeric(data[y], errors="coerce"),
+                }
+            ).dropna()
+
+            if len(frame):
+                return (
+                    px.scatter(
+                        frame,
+                        x=x,
+                        y=y,
+                        title=f"{x} vs {y}",
+                        color_discrete_sequence=["#ec4899"],
+                    ),
+                    "Relationship between two numeric fields",
+                )
+
+        if chart_type == "Histogram" and metric:
+            metric_values = pd.to_numeric(
+                data[metric],
+                errors="coerce",
+            ).dropna()
+
+            if len(metric_values):
+                frame = pd.DataFrame({"Value": metric_values})
+                return (
+                    px.histogram(
+                        frame,
+                        x="Value",
+                        nbins=20,
+                        title=f"Distribution of {metric}",
+                        color_discrete_sequence=["#06b6d4"],
+                    ),
+                    f"Distribution of {metric}",
+                )
+
+        if chart_type == "Quality":
+            missing = data.isna().mean().sort_values().tail(12).sort_values()
+            return (
+                px.bar(
+                    x=missing.values,
+                    y=missing.index,
+                    orientation="h",
+                    range_x=[0, 1],
+                    title="Data quality: missing values",
+                    color_discrete_sequence=["#f43f5e"],
+                ),
+                "Missingness by field",
+            )
+
+        return fallback_count(
+            f"{chart_type} view was unavailable for this schema."
         )
 
-    if chart_type == "Histogram" and metric:
-        return (
-            px.histogram(
-                data,
-                x=metric,
-                nbins=20,
-                title=f"Distribution of {metric}",
-                color_discrete_sequence=["#06b6d4"],
-            ),
-            f"Distribution of {metric}",
+    except Exception:
+        return fallback_count(
+            f"{chart_type} view could not be built from the current fields."
         )
-
-    missing = data.isna().mean().sort_values().tail(12).sort_values()
-
-    return (
-        px.bar(
-            x=missing.values,
-            y=missing.index,
-            orientation="h",
-            range_x=[0, 1],
-            title="Data quality: missing values",
-            color_discrete_sequence=["#f43f5e"],
-        ),
-        "Missingness by field",
-    )
 
 
 def charts_for(data, numeric, dates, categorical):
@@ -409,33 +499,27 @@ def charts_for(data, numeric, dates, categorical):
             numeric[0] if numeric else None,
         ),
         (
+            "Scatter",
+            numeric[0] if numeric else None,
+            numeric[1] if len(numeric) > 1 else None,
+        ),
+        (
             "Histogram",
             None,
             numeric[0] if numeric else None,
         ),
-        ("Quality", None, None),
     ]
 
     for kind, x, y in choices:
-        if kind == "Quality":
-            chart, explanation = chart_for(
-                data,
-                numeric,
-                dates,
-                categorical,
-                "Quality",
-            )
-
-        else:
-            chart, explanation = chart_for(
-                data,
-                numeric,
-                dates,
-                categorical,
-                kind,
-                x,
-                y,
-            )
+        chart, explanation = chart_for(
+            data,
+            numeric,
+            dates,
+            categorical,
+            kind,
+            x,
+            y,
+        )
 
         charts.append((chart, explanation))
 
@@ -513,7 +597,7 @@ def local_answer(question, data, numeric, dates, categorical):
     if any(word in q for word in ("chart", "graph", "visual", "plot")):
         if "line" in q or "trend" in q:
             return (
-                "Use the chart controls below to choose Line, then select "
+                "Use the optional focused chart controls to choose Line, then select "
                 "a date and numeric field."
             )
 
@@ -524,8 +608,8 @@ def local_answer(question, data, numeric, dates, categorical):
             return "Use Histogram to inspect the distribution of one numeric field."
 
         return (
-            "Use the chart controls below this chat to select a focused chart "
-            "type and fields."
+            "Use the optional focused chart controls below this chat to select "
+            "a custom chart type and fields."
         )
 
     if "missing" in q or "quality" in q:
@@ -756,64 +840,74 @@ with st.expander("Ask the local data assistant", expanded=True):
         st.rerun()
 
 
-st.subheader("Focused visual analysis")
+st.subheader("Four-chart overview")
 
 with st.sidebar:
-    st.subheader("Chart controls")
+    st.subheader("Focused chart (optional)")
 
-    chart_type = st.selectbox(
-        "Chart type",
-        [
-            "Auto",
-            "Bar",
-            "Line",
-            "Scatter",
-            "Histogram",
-            "Quality",
-        ],
-        help="Each chart uses at most one or two fields to stay readable.",
+    show_focused_chart = st.checkbox(
+        "Add a focused custom chart",
+        value=False,
+        help=(
+            "The dashboard overview always shows four auto-selected visuals. "
+            "Enable this to add one custom chart."
+        ),
     )
 
-    x_column = st.selectbox(
-        "Category / X field",
-        categorical or ["None"],
-    )
+    chart_type = None
+    x_column = None
+    y_column = None
 
-    y_column = st.selectbox(
-        "Numeric / Y field",
-        numeric or ["None"],
-    )
+    if show_focused_chart:
+        chart_type = st.selectbox(
+            "Chart type",
+            [
+                "Bar",
+                "Line",
+                "Scatter",
+                "Histogram",
+                "Quality",
+            ],
+            help="Each chart uses at most one or two fields to stay readable.",
+        )
 
-    x_column = None if x_column == "None" else x_column
-    y_column = None if y_column == "None" else y_column
+        x_column = st.selectbox(
+            "Category / X field",
+            categorical + dates + ["None"],
+        )
+
+        y_column = st.selectbox(
+            "Numeric / Y field",
+            numeric + ["None"],
+        )
+
+        x_column = None if x_column == "None" else x_column
+        y_column = None if y_column == "None" else y_column
 
 
-if chart_type == "Auto":
-    charts = charts_for(
+charts = charts_for(
+    filtered,
+    numeric,
+    dates,
+    categorical,
+)
+
+if show_focused_chart and chart_type:
+    custom_chart, custom_note = chart_for(
         filtered,
         numeric,
         dates,
         categorical,
+        chart_type,
+        x_column,
+        y_column,
     )
-
-else:
-    charts = [
-        (
-            chart_for(
-                filtered,
-                numeric,
-                dates,
-                categorical,
-                chart_type,
-                x_column,
-                y_column,
-            )[0],
-            "User-selected focused chart",
-        )
-    ]
+    charts.append((custom_chart, f"Focused chart: {custom_note}"))
 
 
-for chart, explanation in charts:
+dashboard_columns = st.columns(2)
+
+for index, (chart, explanation) in enumerate(charts):
     chart.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
@@ -823,12 +917,13 @@ for chart, explanation in charts:
         margin=dict(l=20, r=20, t=55, b=20),
     )
 
-    st.plotly_chart(
-        chart,
-        use_container_width=True,
-    )
-
-    st.caption(explanation)
+    column = dashboard_columns[index % 2]
+    with column:
+        st.plotly_chart(
+            chart,
+            use_container_width=True,
+        )
+        st.caption(explanation)
 
 
 with st.expander("Attention queue and prepared data"):
