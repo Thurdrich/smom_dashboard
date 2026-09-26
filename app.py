@@ -653,7 +653,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
     )
 
     if date_column and metric_column:
-        trend = pd.DataFrame(
+        raw_trend = pd.DataFrame(
             {
                 "Date": parse_dates(data[date_column]),
                 "Value": pd.to_numeric(
@@ -662,6 +662,8 @@ def recommend_actions(data, numeric, dates, categorical, text):
                 ),
             }
         ).dropna().sort_values("Date")
+        trend_coverage = len(raw_trend) / max(len(data), 1)
+        trend = raw_trend
 
         if len(trend) >= 10:
             trend = (
@@ -678,9 +680,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                 delta = (recent - baseline) / scale
                 direction = metric_direction(metric_column)
                 signal_strength = abs(delta)
-                missingness = 1 - (
-                    len(trend) / max(len(data), 1)
-                )
+                missingness = 1 - trend_coverage
 
                 if signal_strength >= .12:
                     if (
@@ -1215,6 +1215,7 @@ def escape_markdown(value):
 
 
 def is_recommendation_request(question):
+    normalized = str(question).lower()
     patterns = (
         r"\brecommend(?:ation|ed)?s?\b",
         r"\bnext steps?\b",
@@ -1231,7 +1232,7 @@ def is_recommendation_request(question):
     )
 
     return any(
-        re.search(pattern, question)
+        re.search(pattern, normalized)
         for pattern in patterns
     )
 
