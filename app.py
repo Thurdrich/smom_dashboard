@@ -1039,6 +1039,22 @@ def chart_for(
     x_column=None,
     y_column=None,
 ):
+    numeric_cache = {}
+    date_cache = {}
+
+    def numeric_values(column):
+        if column not in numeric_cache:
+            numeric_cache[column] = pd.to_numeric(
+                data[column],
+                errors="coerce",
+            )
+        return numeric_cache[column]
+
+    def parsed_dates(column):
+        if column not in date_cache:
+            date_cache[column] = parse_dates(data[column])
+        return date_cache[column]
+
     category = (
         x_column
         if x_column in data.columns
@@ -1098,7 +1114,7 @@ def chart_for(
     def best_metric_column():
         candidates = []
         for column in numeric:
-            values = pd.to_numeric(data[column], errors="coerce")
+            values = numeric_values(column)
             candidates.append(
                 (
                     values.notna().mean(),
@@ -1109,7 +1125,9 @@ def chart_for(
             )
         return max(candidates)[-1] if candidates else metric
 
-    if y_column not in data.columns:
+    if y_column in numeric and y_column in data.columns:
+        metric = y_column
+    else:
         metric = best_metric_column()
 
     if chart_type == "Auto":
@@ -1165,11 +1183,8 @@ def chart_for(
         )
         frame = pd.DataFrame(
             {
-                "Date": parse_dates(data[date_column]),
-                "Value": pd.to_numeric(
-                    data[metric],
-                    errors="coerce",
-                ),
+                "Date": parsed_dates(date_column),
+                "Value": numeric_values(metric),
             }
         ).dropna().sort_values("Date")
 
@@ -1201,31 +1216,47 @@ def chart_for(
             )
 
     if chart_type == "Scatter" and len(numeric) >= 2:
+        def pair_viability(left, right):
+            overlap = pd.concat(
+                [numeric_values(left), numeric_values(right)],
+                axis=1,
+            ).dropna()
+            return (
+                len(overlap),
+                overlap.iloc[:, 0].std(skipna=True) > 0,
+                overlap.iloc[:, 1].std(skipna=True) > 0,
+            )
+
         pair_candidates = []
         for index, left in enumerate(numeric):
-            left_values = pd.to_numeric(data[left], errors="coerce")
             for right in numeric[index + 1 :]:
-                right_values = pd.to_numeric(data[right], errors="coerce")
-                overlap = (
-                    pd.concat([left_values, right_values], axis=1)
-                    .dropna()
-                )
-                if len(overlap) < 5:
+                overlap_len, left_varies, right_varies = pair_viability(left, right)
+                if overlap_len < 5 or not (left_varies and right_varies):
                     continue
                 pair_candidates.append(
                     (
-                        len(overlap),
-                        overlap.iloc[:, 0].std(skipna=True) > 0,
-                        overlap.iloc[:, 1].std(skipna=True) > 0,
+                        overlap_len,
                         left,
                         right,
                     )
                 )
 
+        explicit_viable = False
         if x_column in numeric and y_column in numeric and x_column != y_column:
+            overlap_len, left_varies, right_varies = pair_viability(
+                x_column,
+                y_column,
+            )
+            explicit_viable = (
+                overlap_len >= 5
+                and left_varies
+                and right_varies
+            )
+
+        if explicit_viable:
             x, y = x_column, y_column
         elif pair_candidates:
-            _, _, _, x, y = max(pair_candidates)
+            _, x, y = max(pair_candidates)
         else:
             x, y = numeric[0], numeric[1]
 
@@ -1257,7 +1288,7 @@ def chart_for(
         frame = pd.DataFrame(
             {
                 "Category": clean_label(data[category]),
-                metric: pd.to_numeric(data[metric], errors="coerce"),
+                metric: numeric_values(metric),
             }
         ).dropna()
 
@@ -1286,11 +1317,20 @@ def chart_for(
         date_column = x_column if x_column in dates else dates[0]
         frame = pd.DataFrame(
             {
-                "Date": parse_dates(data[date_column]),
+                "Date": parsed_dates(date_column),
             }
-        ).dropna()
+        ).dropna().copy()
         if len(frame):
-            frame["Date"] = frame["Date"].dt.normalize()
+            if frame["Date"].dt.normalize().nunique() < frame["Date"].nunique():
+                span_days = (
+                    frame["Date"].max() - frame["Date"].min()
+                ).days
+                if span_days > 60:
+                    frame["Date"] = frame["Date"].dt.floor("D")
+                elif span_days > 2:
+                    frame["Date"] = frame["Date"].dt.floor("H")
+                else:
+                    frame["Date"] = frame["Date"].dt.floor("15min")
             trend = (
                 frame.groupby("Date", as_index=False)
                 .size()
@@ -1311,10 +1351,7 @@ def chart_for(
                 )
 
     if chart_type == "Histogram" and metric:
-        metric_values = pd.to_numeric(
-            data[metric],
-            errors="coerce",
-        ).dropna()
+        metric_values = numeric_values(metric).dropna()
 
         if len(metric_values):
             frame = pd.DataFrame({metric: metric_values})
@@ -1366,6 +1403,7 @@ def chart_for(
 def charts_for(data, numeric, dates, categorical):
     charts = []
     fallback_signatures = set()
+    preferred_numeric = None
 
     choices = [
         ["Bar", "Histogram", "Count"],
@@ -1373,6 +1411,20 @@ def charts_for(data, numeric, dates, categorical):
         ["Scatter", "Box", "Bar", "Count"],
         ["Histogram", "Box", "Bar", "Count"],
     ]
+
+    if numeric:
+        metric_candidates = []
+        for column in numeric:
+            values = pd.to_numeric(data[column], errors="coerce")
+            metric_candidates.append(
+                (
+                    values.notna().mean(),
+                    values.std(skipna=True) > 0,
+                    values.nunique(dropna=True),
+                    column,
+                )
+            )
+        preferred_numeric = max(metric_candidates)[-1]
 
     def alternate_fallback(kind):
         if kind == "Line" and len(data):
@@ -1436,28 +1488,55 @@ def charts_for(data, numeric, dates, categorical):
             "Count",
         )
 
-    for slot_index, slot_kinds in enumerate(choices):
+    def default_axes(kind):
+        if kind in {"Line", "CountTimeline"}:
+            return dates[0] if dates else None, preferred_numeric
+        if kind == "Scatter":
+            return (
+                numeric[0] if numeric else None,
+                numeric[1] if len(numeric) > 1 else None,
+            )
+        if kind == "Box":
+            return (
+                best_category(data, categorical),
+                preferred_numeric,
+            )
+        if kind == "Histogram":
+            return None, preferred_numeric
+        if kind == "Bar":
+            return best_category(data, categorical), None
+        return None, None
+
+    for slot_kinds in choices:
         chart = None
         explanation = ""
         for kind in slot_kinds:
+            x_default, y_default = default_axes(kind)
             chart, explanation = chart_for(
                 data,
                 numeric,
                 dates,
                 categorical,
                 kind,
-                dates[0] if dates else None,
-                numeric[0] if numeric else None,
+                x_default,
+                y_default,
             )
-            if "unavailable for this schema" not in explanation:
+            if (
+                "unavailable for this schema" not in explanation
+                and "instead." not in explanation
+            ):
                 break
 
-        is_fallback = "instead." in explanation
+        is_fallback = (
+            "instead." in explanation
+            or "unavailable for this schema" in explanation
+        )
         if is_fallback and explanation in fallback_signatures:
-            chart, explanation = alternate_fallback(
-                "Line" if slot_index == 1 else "Bar"
+            chart, explanation = alternate_fallback(slot_kinds[0])
+            is_fallback = (
+                "instead." in explanation
+                or "unavailable for this schema" in explanation
             )
-            is_fallback = "instead." in explanation
         if is_fallback:
             fallback_signatures.add(explanation)
 

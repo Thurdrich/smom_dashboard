@@ -30,7 +30,7 @@ The Streamlit app entrypoint is `app.py`. Streamlit Cloud can deploy the `main` 
 
 The dashboard detects numeric, categorical, text, and date-like fields without requiring a fixed schema.
 
-- **Core dashboard:** always renders a 4-chart adaptive overview (composition, trend, relationship, distribution) with schema-aware fallbacks so visuals still remain useful when some chart types are not viable.
+- **Core dashboard:** always renders a 4-chart adaptive overview. Each slot uses a prioritized chart-family fallback chain (for example composition-like, trend-like, relationship-like, distribution-like, then summary/count views) based on the detected schema.
 - **Focused custom chart (optional):** you can add one extra chart without replacing the core four-chart overview.
 - **Assistant recommendations:** after chart rendering, recommendations are generated from findings in the current filtered dataset and presented as follow-up guidance.
 - **Local assistant chat:** a rule-based assistant answers questions using only the uploaded/filtered data.
