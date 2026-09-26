@@ -261,6 +261,9 @@ def clean_label(series):
 
 
 def best_category(data, categorical):
+    if not categorical:
+        return None
+
     usable = [
         column
         for column in categorical
@@ -293,7 +296,7 @@ def best_category(data, categorical):
             ),
         )[0]
         if usable
-        else (categorical[0] if categorical else None)
+        else categorical[0]
     )
 
 
