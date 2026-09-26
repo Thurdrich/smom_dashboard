@@ -9,7 +9,7 @@ import plotly.express as px
 import streamlit as st
 
 st.set_page_config(
-    page_title="SMOM | Manpower & Travel Readiness Studio",
+    page_title="SMOM | Predictive Insight Studio",
     page_icon="⚓",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -66,12 +66,6 @@ DATE_WORDS = (
     "created",
     "received",
     "distributed",
-)
-
-SENSITIVE_WORDS = (
-    r"name|employee|person|lname|fname|first.?name|last.?name|"
-    r"civmar.?/per|employee.?id|crew.?id|dodid|passport|"
-    r"travel.?voucher|orders?.?(id|number)"
 )
 
 RECOMMENDATION_PATTERN = re.compile(
@@ -414,13 +408,13 @@ def domain_terms(data):
         return {
             "records": "crew and travel records",
             "segment": "crew/travel segment",
-            "focus": "manning and TDY/travel readiness",
+            "focus": "manning and TDY/travel operations",
         }
     if context["crew"]:
         return {
             "records": "billets",
             "segment": "crew segment",
-            "focus": "manning readiness",
+            "focus": "manning operations",
         }
     if context["travel"]:
         return {
@@ -432,7 +426,7 @@ def domain_terms(data):
         return {
             "records": "port movements",
             "segment": "port segment",
-            "focus": "port readiness",
+            "focus": "port operations",
         }
     return {
         "records": "records",
@@ -531,6 +525,68 @@ def confidence_label(sample_size, missingness, signal_strength):
         return "Medium"
 
     return "Low"
+
+
+def prediction_readiness_components(data, numeric, dates, categorical):
+    if data.empty:
+        return {
+            "readiness_score": 0.0,
+            "coverage": 0.0,
+            "schema_richness": 0.0,
+            "trendability": 0.0,
+            "signal_density": 0.0,
+            "field_signal": pd.Series(dtype=float),
+        }
+
+    row_count = len(data)
+    coverage = float(data.notna().mean().mean())
+    schema_richness = min(1.0, len(data.columns) / 30)
+    trendability = min(1.0, len(dates) / 2)
+    signal_density = min(
+        1.0,
+        (len(numeric) + len(categorical)) / max(len(data.columns), 1),
+    )
+
+    readiness_score = (
+        0.35 * coverage
+        + 0.25 * schema_richness
+        + 0.2 * trendability
+        + 0.2 * signal_density
+    )
+
+    field_scores = {}
+    for column in data.columns:
+        non_null = data[column].dropna()
+        coverage_score = float(data[column].notna().mean())
+        if non_null.empty:
+            uniqueness = 0.0
+        else:
+            uniqueness = min(1.0, non_null.nunique(dropna=True) / len(non_null))
+
+        variability = 0.0
+        if column in numeric:
+            numeric_values = pd.to_numeric(data[column], errors="coerce").dropna()
+            if len(numeric_values) > 1:
+                denominator = max(abs(float(numeric_values.mean())), 1.0)
+                variability = min(
+                    1.0,
+                    float(numeric_values.std()) / denominator,
+                )
+
+        field_scores[column] = (
+            0.55 * coverage_score
+            + 0.3 * uniqueness
+            + 0.15 * variability
+        )
+
+    return {
+        "readiness_score": readiness_score,
+        "coverage": coverage,
+        "schema_richness": schema_richness,
+        "trendability": trendability,
+        "signal_density": signal_density,
+        "field_signal": pd.Series(field_scores).sort_values(ascending=False),
+    }
 
 
 def recommendation_record(
@@ -810,7 +866,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                         title = "Recent trend shows deterioration"
                         action = (
                             (
-                                "Trigger a short-horizon readiness review, check what changed in the "
+                                "Trigger a short-horizon trend review, check what changed in the "
                                 "most recent watch/port/travel period, and monitor this metric until "
                                 "it moves back toward baseline."
                                 if maritime_mode
@@ -880,52 +936,45 @@ def recommend_actions(data, numeric, dates, categorical, text):
         if column in data.columns
     ]
     if quality_fields:
-        quality_missingness = (
-            data[quality_fields].isna().mean().sort_values(ascending=False)
+        profile = prediction_readiness_components(
+            data[quality_fields],
+            [column for column in numeric if column in quality_fields],
+            [column for column in dates if column in quality_fields],
+            [column for column in categorical if column in quality_fields],
         )
-        if (
-            len(quality_missingness)
-            and (
-                quality_missingness.iloc[0] >= .3
-                or quality_missingness.mean() >= .2
-            )
-        ):
-            worst_field = quality_missingness.index[0]
-            worst_rate = quality_missingness.iloc[0]
+        low_signal = profile["field_signal"].sort_values().head(1)
+        if len(low_signal) and float(low_signal.iloc[0]) < .45:
+            weakest_field = low_signal.index[0]
+            weakest_score = float(low_signal.iloc[0])
             confidence = confidence_label(
                 row_count,
-                float(quality_missingness.mean()),
-                worst_rate,
+                1 - profile["coverage"],
+                .45 - weakest_score,
             )
             recommendations.append(
                 recommendation_record(
-                    "Data quality should be tightened first",
+                    "Strengthen weak feature signals",
                     (
-                        f"`{escape_markdown(worst_field)}` is missing in {worst_rate:.1%} of the key fields "
-                        "used for recommendations, so the current guidance should be treated "
-                        "as directional rather than definitive."
+                        f"`{escape_markdown(weakest_field)}` has a low signal score "
+                        f"({weakest_score:.2f}) compared with other key fields."
                     ),
                     (
-                        (
-                            "Improve source capture or backfill the highest-missing operational "
-                            "fields before making major billet, readiness, or travel-priority decisions."
-                            if maritime_mode
-                            else "Improve source capture or backfill the highest-missing operational "
-                            "fields before making major staffing, readiness, or segment-level decisions."
-                        )
+                        "Improve collection consistency and feature detail for weak-signal "
+                        "fields before acting on predictive comparisons."
                     ),
                     confidence,
                     evidence=(
-                        f"Average missingness across key recommendation fields is {quality_missingness.mean():.1%}."
+                        f"Key-field coverage is {profile['coverage']:.1%} with schema richness "
+                        f"{profile['schema_richness']:.1%}."
                     ),
-                    priority=worst_rate,
+                    priority=.45 - weakest_score,
                 )
             )
 
     if not recommendations:
         fallback_confidence = confidence_label(
             row_count,
-            float(data.isna().mean().mean()),
+            1 - float(data.notna().mean().mean()),
             .08,
         )
         recommendations.append(
@@ -933,9 +982,9 @@ def recommend_actions(data, numeric, dates, categorical, text):
                 "No strong recommendation signal yet",
                 "This filtered slice does not show a stable concentration, operating gap, or directional trend large enough to justify a stronger action call.",
                 (
-                    "Use the chart and filter controls to inspect smaller cohorts or narrower time windows for localized billet, travel, or port readiness issues before changing operations."
+                    "Use the chart and filter controls to inspect smaller cohorts or narrower time windows for localized predictive signals before changing operations."
                     if maritime_mode
-                    else "Use the chart and filter controls to inspect smaller cohorts or narrower time windows for localized issues before changing operations."
+                    else "Use the chart and filter controls to inspect smaller cohorts or narrower time windows for localized predictive signals before changing operations."
                 ),
                 fallback_confidence,
                 priority=.08,
@@ -1178,22 +1227,28 @@ def chart_for(
                 f"Distribution of {metric}",
             )
 
-    if chart_type == "Quality":
-        missing = data.isna().mean().sort_values().tail(12).sort_values()
-        if not len(missing) or missing.max() <= 0:
+    if chart_type == "Signal":
+        profile = prediction_readiness_components(data, numeric, dates, categorical)
+        field_signal = (
+            profile["field_signal"]
+            .sort_values(ascending=False)
+            .head(12)
+            .sort_values()
+        )
+        if not len(field_signal):
             return fallback_count(
-                "Quality view was unavailable for this schema."
+                "Signal view was unavailable for this schema."
             )
         return (
             px.bar(
-                x=missing.values,
-                y=missing.index,
+                x=field_signal.values,
+                y=field_signal.index,
                 orientation="h",
                 range_x=[0, 1],
-                title="Data quality: missing values",
+                title="Feature signal strength by field",
                 color_discrete_sequence=["#f43f5e"],
             ),
-            "Missingness by field",
+            "Relative signal strength by field",
         )
 
     if chart_type in {"Count", "Bar", "Line", "Scatter", "Histogram"}:
@@ -1337,12 +1392,12 @@ def insights(data, numeric, dates, categorical, text):
                 f"**{parsed.min():%Y-%m-%d} to {parsed.max():%Y-%m-%d}**."
             )
 
-    missing = data.isna().mean().sort_values(ascending=False)
-
-    if len(missing) and missing.iloc[0] >= .25:
+    profile = prediction_readiness_components(data, numeric, dates, categorical)
+    field_signal = profile["field_signal"]
+    if len(field_signal):
         findings.append(
-            f"**{missing.index[0]}** is missing in "
-            f"**{missing.iloc[0]:.1%}** of rows."
+            f"Prediction readiness is **{profile['readiness_score']:.0%}**, led by "
+            f"**{field_signal.index[0]}** as the strongest feature signal."
         )
 
     return (
@@ -1385,34 +1440,6 @@ def format_recommendations(recommendations, limit=3):
     return "\n".join(lines)
 
 
-def sensitive_columns(frame):
-    return [
-        column
-        for column in frame.columns
-        if re.search(SENSITIVE_WORDS, str(column), re.I)
-    ]
-
-
-def mask_sensitive(frame, columns=None):
-    result = frame.copy()
-
-    columns = (
-        sensitive_columns(result)
-        if columns is None
-        else columns
-    )
-
-    for column in columns:
-        result[column] = result[column].notna().map(
-            {
-                True: "[present]",
-                False: "[missing]",
-            }
-        )
-
-    return result
-
-
 def local_answer(question, data, numeric, dates, categorical, text):
     q = question.lower().strip()
     category = best_category(data, categorical)
@@ -1422,7 +1449,7 @@ def local_answer(question, data, numeric, dates, categorical, text):
         return (
             "The current filters return no rows, so there is nothing reliable to "
             + (
-                "summarize for manning, travel, or readiness yet."
+                "summarize for robust prediction insights yet."
                 if terms["records"] != "records"
                 else "summarize or recommend yet."
             )
@@ -1464,6 +1491,7 @@ def local_answer(question, data, numeric, dates, categorical, text):
             "travel backlog",
             "tdy backlog",
             "port readiness",
+            "predictive signal",
         )
     ):
         return format_recommendations(
@@ -1476,14 +1504,22 @@ def local_answer(question, data, numeric, dates, categorical, text):
             )
         )
 
-    if "missing" in q or "quality" in q:
-        missing = data.isna().mean().sort_values(ascending=False)
-        top = missing.head(5)
+    if "missing" in q:
+        missing = data.isna().mean().sort_values(ascending=False).head(5)
+        if len(missing):
+            return "Top missing fields: " + "; ".join(
+                f"{column} {value:.1%}"
+                for column, value in missing.items()
+            ) + "."
+        return "No missing values were detected in the current filtered dataset."
 
-        return "Missingness: " + "; ".join(
-            f"{column} {value:.1%}"
-            for column, value in top.items()
-        ) + "."
+    if "quality" in q:
+        profile = prediction_readiness_components(data, numeric, dates, categorical)
+        return (
+            f"Prediction readiness is {profile['readiness_score']:.0%} "
+            f"(coverage {profile['coverage']:.0%}, schema richness {profile['schema_richness']:.0%}, "
+            f"trendability {profile['trendability']:.0%})."
+        )
 
     if "how many" in q or "rows" in q or "records" in q:
         return (
@@ -1525,9 +1561,9 @@ def local_answer(question, data, numeric, dates, categorical, text):
 
     return (
         (
-            "I can answer questions about counts, missingness, date coverage, largest segments, recommendation priorities, and chart choices for this manpower/travel readiness dataset."
+            "I can answer questions about counts, prediction readiness, date coverage, largest segments, recommendation priorities, and chart choices for this dataset."
             if terms["records"] != "records"
-            else "I can answer questions about row counts, missingness, detected dates, categories, numeric summaries, and chart choices using only this dataset."
+            else "I can answer questions about row counts, prediction readiness, detected dates, categories, numeric summaries, and chart choices using only this dataset."
         )
     )
 
@@ -1545,37 +1581,19 @@ with st.sidebar:
         "Supported: CSV, Excel, JSON, Parquet, XML. "
         "Files are analyzed in-session."
     )
+    st.caption(
+        "Data is shown exactly as uploaded in this local session. "
+        "Remove direct identifiers before upload if needed."
+    )
 
 
 uploaded_data, errors = load_uploads(uploads)
 analysis_data = uploaded_data
-detected_sensitive = (
-    sensitive_columns(analysis_data)
-    if not analysis_data.empty
-    else []
-)
 
-mask_names = True
-
-if detected_sensitive:
-    st.warning(
-        "Potential personal identifiers were detected. "
-        "Masking is recommended for previews and downloads."
-    )
-
-    mask_names = st.radio(
-        "Identifier handling",
-        (
-            "Mask detected fields (recommended)",
-            "Continue without masking",
-        ),
-        key="sensitive_data_choice",
-    ).startswith("Mask")
-
-st.title("⚓ SMOM | Manpower & Travel Readiness Studio")
+st.title("🔮 SMOM | Predictive Insight Studio")
 
 st.caption(
-    "Maritime manpower and travel tracking insights with a local data assistant—"
+    "Personalized, local-only predictive insights generated from your uploaded data—"
     "no external API or data transfer."
 )
 
@@ -1584,8 +1602,7 @@ for error in errors:
 
 if analysis_data.empty:
     st.info(
-        "Upload a maritime manpower/travel dataset to begin (for example: "
-        "manning rosters, TDY/travel requests, port call schedules, or readiness reports)."
+        "Upload any dataset to begin personalized signal discovery and predictive insights."
     )
     st.stop()
 
@@ -1632,10 +1649,17 @@ st.success(
     f"{len(filtered.columns):,} fields."
 )
 
-missing_rate = (
-    float(filtered.isna().mean().mean())
+readiness_profile = (
+    prediction_readiness_components(filtered, numeric, dates, categorical)
     if not filtered.empty
-    else 0
+    else {
+        "readiness_score": 0.0,
+        "coverage": 0.0,
+        "schema_richness": 0.0,
+        "trendability": 0.0,
+        "signal_density": 0.0,
+        "field_signal": pd.Series(dtype=float),
+    }
 )
 recommendations = cached_recommend_actions(
     filtered,
@@ -1653,16 +1677,16 @@ metrics[2].metric(
     "DATE / NUMERIC SIGNALS",
     f"{len(dates)} / {len(numeric)}",
 )
-metrics[3].metric("MISSING VALUES", f"{missing_rate:.1%}")
+metrics[3].metric("PREDICTION READINESS", f"{readiness_profile['readiness_score']:.0%}")
 
 
 st.markdown(
     f"""
 <div class="insight">
 <strong>
-{"Data looks sound for exploration."
-if missing_rate < .05
-else "Proceed carefully: missingness may distort conclusions."}
+{"Strong predictive signal profile detected."
+if readiness_profile["readiness_score"] >= .65
+else "Signal profile is moderate; refine filters to strengthen predictions."}
 </strong>
 <br>
 {insights(filtered, numeric, dates, categorical, text)}
@@ -1715,7 +1739,7 @@ with st.expander("Ask the local data assistant", expanded=True):
             st.markdown(message["content"])
 
     question = st.chat_input(
-        "Ask about manning gaps, travel backlog, readiness trends, or request a chart change…"
+        "Ask about key signals, trend shifts, likely drivers, or request a chart change…"
     )
 
     if question:
@@ -1745,7 +1769,7 @@ with st.expander("Ask the local data assistant", expanded=True):
         st.rerun()
 
 
-st.subheader("Four-chart overview")
+st.subheader("Adaptive four-chart overview")
 
 with st.sidebar:
     st.subheader("Focused chart (optional)")
@@ -1771,7 +1795,7 @@ with st.sidebar:
                 "Line",
                 "Scatter",
                 "Histogram",
-                "Quality",
+                "Signal",
             ],
             help="Each chart uses at most one or two fields to stay readable.",
         )
@@ -1861,71 +1885,42 @@ if custom_view:
     st.caption(f"Focused chart: {focused_note}")
 
 
-with st.expander("Attention queue and prepared data"):
-    exception_columns = [
-        column
-        for column in text
-        if column != "Source file"
-    ]
+with st.expander("Signal workspace and prepared data"):
+    prepared = filtered
+    st.warning(
+        "Prepared data preview and downloads include raw uploaded values "
+        "(unmasked). Confirm your dataset is safe to display locally before sharing screens or files."
+    )
+    snapshot_metrics = st.columns(3)
+    snapshot_metrics[0].metric("Prepared rows", f"{len(prepared):,}")
+    snapshot_metrics[1].metric("Prepared fields", f"{len(prepared.columns):,}")
+    snapshot_metrics[2].metric(
+        "Prediction readiness",
+        f"{readiness_profile['readiness_score']:.0%}",
+    )
 
-    if exception_columns:
-        exception_mask = (
-            filtered[exception_columns]
-            .fillna("")
-            .astype(str)
-            .apply(
-                lambda column: column.str.contains(
-                    r"unable|await|stand.?by|delay|cancel|no.?show|#REF!",
-                    case=False,
-                    regex=True,
-                )
-            )
-            .any(axis=1)
-        )
-
-        queue = filtered.loc[exception_mask]
-
-        st.write(
-            f"**{len(queue):,}** rows contain exception markers."
-        )
-
+    field_signal_summary = readiness_profile["field_signal"].head(10)
+    if len(field_signal_summary):
+        st.caption("Top feature signals in prepared data")
         st.dataframe(
-            (
-                mask_sensitive(queue.head(50), detected_sensitive)
-                if mask_names
-                else queue.head(50)
+            pd.DataFrame(
+                {
+                    "Field": field_signal_summary.index,
+                    "Signal score": field_signal_summary.values,
+                }
             ),
             use_container_width=True,
             hide_index=True,
         )
 
-    else:
-        st.caption("No free-text exception field was detected.")
-
-    prepared = (
-        mask_sensitive(filtered, detected_sensitive)
-        if mask_names
-        else filtered
-    )
-
-    snapshot_metrics = st.columns(3)
-    snapshot_metrics[0].metric("Prepared rows", f"{len(prepared):,}")
-    snapshot_metrics[1].metric("Prepared fields", f"{len(prepared.columns):,}")
-    snapshot_metrics[2].metric(
-        "Masked ID fields",
-        f"{len(detected_sensitive) if mask_names else 0}",
-    )
-
-    missing_summary = (
-        prepared.isna().mean().sort_values(ascending=False).head(10)
-    )
-    if len(missing_summary):
-        st.caption("Top missingness fields in prepared data")
+    weak_signal_summary = readiness_profile["field_signal"].sort_values().head(10)
+    if len(weak_signal_summary):
+        st.caption("Weakest feature signals in prepared data")
         st.dataframe(
             pd.DataFrame(
                 {
-                    "Field": missing_summary.index,
-                    "Missing rate": missing_summary.values,
+                    "Field": weak_signal_summary.index,
+                    "Signal score": weak_signal_summary.values,
                 }
             ),
             use_container_width=True,
@@ -1946,11 +1941,11 @@ with st.expander("Attention queue and prepared data"):
     st.download_button(
         "Download prepared view",
         prepared.to_csv(index=False).encode("utf-8"),
-        "smom_manpower_travel_prepared_data.csv",
+        "smom_predictive_prepared_data.csv",
         "text/csv",
     )
 
 
 st.caption(
-    "No-BS rule: charts identify patterns; verify underlying records before operational decisions."
+    "No-BS rule: charts highlight predictive patterns; validate source records before making decisions."
 )
