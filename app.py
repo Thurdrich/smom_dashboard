@@ -59,6 +59,22 @@ SENSITIVE_WORDS = (
     r"civmar.?/per"
 )
 
+RECOMMENDATION_PATTERN = re.compile(
+    r"\brecommend(?:ation|ed)?s?\b|"
+    r"\bnext steps?\b|"
+    r"\bwhat should we do\b|"
+    r"\bwhat do we do\b|"
+    r"\bwhat actions?\b|"
+    r"\bactions? (?:should|do|to take|next)\b|"
+    r"\baction plan\b|"
+    r"\bplan of action\b|"
+    r"\btop priority\b|"
+    r"\bhighest priority\b|"
+    r"\bmain priority\b|"
+    r"\bwhat(?:'s| is) (?:our |the )?priority\b",
+    re.I,
+)
+
 
 def demo_data():
     rng = np.random.default_rng(7)
@@ -1216,25 +1232,8 @@ def escape_markdown(value):
 
 
 def is_recommendation_request(question):
-    normalized = str(question).lower()
-    patterns = (
-        r"\brecommend(?:ation|ed)?s?\b",
-        r"\bnext steps?\b",
-        r"\bwhat should we do\b",
-        r"\bwhat do we do\b",
-        r"\bwhat actions?\b",
-        r"\bactions? (?:should|do|to take|next)\b",
-        r"\baction plan\b",
-        r"\bplan of action\b",
-        r"\btop priority\b",
-        r"\bhighest priority\b",
-        r"\bmain priority\b",
-        r"\bwhat(?:'s| is) (?:our |the )?priority\b",
-    )
-
-    return any(
-        re.search(pattern, normalized)
-        for pattern in patterns
+    return bool(
+        RECOMMENDATION_PATTERN.search(str(question))
     )
 
 
@@ -1529,17 +1528,12 @@ st.subheader("Recommended actions")
 recommendation_columns = st.columns(2)
 
 for index, recommendation in enumerate(recommendations[:4]):
-    evidence = (
-        f"<br><em>{html.escape(recommendation['evidence'])}</em>"
-        if recommendation.get("evidence")
-        else ""
-    )
     recommendation_html = f"""
     <div class="recommendation-card">
-        <strong>{html.escape(recommendation["title"])}</strong><br>
-        {html.escape(recommendation["insight"])}<br><br>
-        <strong>Suggested action:</strong> {html.escape(recommendation["action"])}
-        {evidence}<br>
+        <h4>{html.escape(recommendation["title"])}</h4>
+        <p><strong>Insight:</strong> {html.escape(recommendation["insight"])}</p>
+        <p><strong>Suggested action:</strong> {html.escape(recommendation["action"])}</p>
+        {f"<p><strong>Evidence:</strong> {html.escape(recommendation['evidence'])}</p>" if recommendation.get("evidence") else ""}
         <span class="recommendation-confidence">
             Confidence: {html.escape(recommendation["confidence"])}
         </span>
