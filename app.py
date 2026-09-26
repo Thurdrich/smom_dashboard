@@ -1499,7 +1499,16 @@ def local_answer(question, data, numeric, dates, categorical, text):
             )
         )
 
-    if "missing" in q or "quality" in q:
+    if "missing" in q:
+        missing = data.isna().mean().sort_values(ascending=False).head(5)
+        if len(missing):
+            return "Top missing fields: " + "; ".join(
+                f"{column} {value:.1%}"
+                for column, value in missing.items()
+            ) + "."
+        return "No missing values were detected in the current filtered dataset."
+
+    if "quality" in q:
         profile = prediction_readiness_components(data, numeric, dates, categorical)
         return (
             f"Prediction readiness is {profile['readiness_score']:.0%} "
@@ -1566,6 +1575,10 @@ with st.sidebar:
     st.caption(
         "Supported: CSV, Excel, JSON, Parquet, XML. "
         "Files are analyzed in-session."
+    )
+    st.caption(
+        "Data is shown exactly as uploaded in this local session. "
+        "Remove direct identifiers before upload if needed."
     )
 
 
