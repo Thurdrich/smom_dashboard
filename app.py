@@ -523,6 +523,7 @@ def chart_for(
 
 def charts_for(data, numeric, dates, categorical):
     charts = []
+    fallback_signatures = set()
 
     choices = [
         ("Bar", None, None),
@@ -543,6 +544,68 @@ def charts_for(data, numeric, dates, categorical):
         ),
     ]
 
+    def alternate_fallback(kind):
+        if kind == "Line" and len(data):
+            sequence = pd.DataFrame(
+                {
+                    "Row": np.arange(1, len(data) + 1),
+                    "Cumulative records": np.arange(1, len(data) + 1),
+                }
+            )
+            return (
+                px.line(
+                    sequence,
+                    x="Row",
+                    y="Cumulative records",
+                    title="Cumulative record sequence",
+                    color_discrete_sequence=["#06b6d4"],
+                ),
+                "Fallback trend when no date/metric pair is available.",
+            )
+
+        cardinality = (
+            data.nunique(dropna=True)
+            .sort_values(ascending=False)
+            .head(12)
+        )
+        if len(cardinality):
+            frame = pd.DataFrame(
+                {
+                    "Field": cardinality.index.astype(str),
+                    "Distinct values": cardinality.values,
+                }
+            )
+            if kind == "Scatter":
+                return (
+                    px.scatter(
+                        frame,
+                        x="Field",
+                        y="Distinct values",
+                        title="Field cardinality snapshot",
+                        color_discrete_sequence=["#ec4899"],
+                    ),
+                    "Distinct-value comparison across fields.",
+                )
+            return (
+                px.bar(
+                    frame.sort_values("Distinct values"),
+                    x="Distinct values",
+                    y="Field",
+                    orientation="h",
+                    title="Distinct values by field",
+                    color_discrete_sequence=["#a855f7"],
+                ),
+                "Fallback schema summary across available fields.",
+            )
+
+        return chart_for(
+            data,
+            numeric,
+            dates,
+            categorical,
+            "Count",
+        )
+
     for kind, x, y in choices:
         chart, explanation = chart_for(
             data,
@@ -553,6 +616,12 @@ def charts_for(data, numeric, dates, categorical):
             x,
             y,
         )
+
+        is_fallback = "instead." in explanation
+        if is_fallback and explanation in fallback_signatures:
+            chart, explanation = alternate_fallback(kind)
+        if is_fallback:
+            fallback_signatures.add(explanation)
 
         charts.append((chart, explanation))
 
