@@ -815,6 +815,23 @@ def recommend_actions(data, numeric, dates, categorical, text):
     ]
 
 
+@st.cache_data(show_spinner=False)
+def cached_recommend_actions(
+    data,
+    numeric,
+    dates,
+    categorical,
+    text,
+):
+    return recommend_actions(
+        data,
+        list(numeric),
+        list(dates),
+        list(categorical),
+        list(text),
+    )
+
+
 def chart_for(
     data,
     numeric,
@@ -1186,21 +1203,29 @@ def insights(data, numeric, dates, categorical, text):
     )
 
 
+def escape_markdown(value):
+    return re.sub(
+        r"([\\`*_{}\[\]()#+\-=|>!])",
+        r"\\\1",
+        str(value).replace("\n", " "),
+    )
+
+
 def format_recommendations(recommendations, limit=3):
     lines = []
 
     for recommendation in recommendations[:limit]:
         evidence = (
-            f" Evidence: {recommendation['evidence']}"
+            f" Evidence: {escape_markdown(recommendation['evidence'])}"
             if recommendation.get("evidence")
             else ""
         )
         lines.append(
             "- "
-            f"**{recommendation['title']}** "
-            f"({recommendation['confidence']}) — "
-            f"{recommendation['insight']} "
-            f"**Action:** {recommendation['action']}{evidence}"
+            f"**{escape_markdown(recommendation['title'])}** "
+            f"({escape_markdown(recommendation['confidence'])}) — "
+            f"{escape_markdown(recommendation['insight'])} "
+            f"**Action:** {escape_markdown(recommendation['action'])}{evidence}"
         )
 
     return "\n".join(lines)
@@ -1253,17 +1278,6 @@ def local_answer(question, data, numeric, dates, categorical, text):
             "summarize or recommend yet."
         )
 
-    if any(intent in q for intent in recommendation_intents):
-        return format_recommendations(
-            recommend_actions(
-                data,
-                numeric,
-                dates,
-                categorical,
-                text,
-            )
-        )
-
     if any(word in q for word in ("chart", "graph", "visual", "plot")):
         if "line" in q or "trend" in q:
             return (
@@ -1280,6 +1294,17 @@ def local_answer(question, data, numeric, dates, categorical, text):
         return (
             "Use the optional focused chart controls below this chat to select "
             "a custom chart type and fields."
+        )
+
+    if any(intent in q for intent in recommendation_intents):
+        return format_recommendations(
+            cached_recommend_actions(
+                data,
+                tuple(numeric),
+                tuple(dates),
+                tuple(categorical),
+                tuple(text),
+            )
         )
 
     if "missing" in q or "quality" in q:
@@ -1447,12 +1472,12 @@ missing_rate = (
     if not filtered.empty
     else 0
 )
-recommendations = recommend_actions(
+recommendations = cached_recommend_actions(
     filtered,
-    numeric,
-    dates,
-    categorical,
-    text,
+    tuple(numeric),
+    tuple(dates),
+    tuple(categorical),
+    tuple(text),
 )
 
 metrics = st.columns(4)
