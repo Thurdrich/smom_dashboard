@@ -855,12 +855,8 @@ def recommend_actions(data, numeric, dates, categorical, text):
                     .astype(int)
                 )
                 safe_check["safe_threshold"] = (
-                    safe_check["underway_count"]
-                    .fillna(
-                        safe_check[rating_column].map(
-                            rating_baseline
-                        )
-                    )
+                    safe_check[rating_column]
+                    .map(rating_baseline)
                     .fillna(0)
                     .astype(int)
                 )
@@ -875,14 +871,20 @@ def recommend_actions(data, numeric, dates, categorical, text):
                 )
 
                 if len(safe_check):
-                    worst = safe_check.sort_values(
-                        ["deficit", "safe_threshold"],
-                        ascending=False,
-                    ).iloc[0]
                     has_deficit = bool((safe_check["deficit"] > 0).any())
                     go_status = "NO-GO" if has_deficit else "GO"
+                    if has_deficit:
+                        selected_group = safe_check.sort_values(
+                            ["deficit", "safe_threshold"],
+                            ascending=False,
+                        ).iloc[0]
+                    else:
+                        selected_group = safe_check.sort_values(
+                            ["deficit", "safe_threshold"],
+                            ascending=[False, True],
+                        ).iloc[0]
                     unit_parts = [
-                        f"{column}: {worst[column]}"
+                        f"{column}: {selected_group[column]}"
                         for column in key_columns
                     ]
                     unit_label = ", ".join(unit_parts)
@@ -906,7 +908,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                             "ABS-safe shipboard ratings check before underway",
                             (
                                 f"{go_status} readiness check for `{escape_markdown(unit_label)}` "
-                                "against the same-unit underway baseline."
+                                "against the per-rating underway baseline."
                             ),
                             (
                                 "Use this baseline as the minimum shipboard rating threshold from any port "
@@ -914,9 +916,9 @@ def recommend_actions(data, numeric, dates, categorical, text):
                             ),
                             confidence,
                             evidence=(
-                                f"Required ABS-safe baseline: {int(worst['safe_threshold'])}; "
-                                f"currently shipboard: {int(worst['onboard_count'])}; "
-                                f"deficit: {int(worst['deficit'])}."
+                                f"Required ABS-safe baseline: {int(selected_group['safe_threshold'])}; "
+                                f"currently shipboard: {int(selected_group['onboard_count'])}; "
+                                f"deficit: {int(selected_group['deficit'])}."
                             ),
                             priority=signal_strength,
                         )
@@ -1523,7 +1525,9 @@ def chart_available_for_schema(
     metric = numeric[0] if numeric else None
 
     if chart_type == "Bar":
-        return bool(category)
+        if not category:
+            return False
+        return bool(clean_label(data[category]).ne("Missing").any())
 
     if chart_type == "Line" and dates and metric:
         frame = pd.DataFrame(
