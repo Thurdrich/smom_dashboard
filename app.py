@@ -360,7 +360,30 @@ def chart_for(
         )
 
     if chart_type == "Auto":
-        chart_type = "Bar" if category else ("Histogram" if metric else "Count")
+        for candidate, is_possible in [
+            ("Bar", bool(category)),
+            ("Line", bool(dates and metric)),
+            ("Scatter", len(numeric) >= 2),
+            ("Histogram", bool(metric)),
+        ]:
+            if not is_possible:
+                continue
+
+            chart, note = chart_for(
+                data,
+                numeric,
+                dates,
+                categorical,
+                candidate,
+                x_column,
+                y_column,
+            )
+            if "unavailable for this schema" not in note:
+                return chart, note
+
+        return fallback_count(
+            "Auto view was unavailable for this schema."
+        )
 
     if chart_type == "Bar" and category:
         counts = (
@@ -458,11 +481,11 @@ def chart_for(
         ).dropna()
 
         if len(metric_values):
-            frame = pd.DataFrame({"Value": metric_values})
+            frame = pd.DataFrame({metric: metric_values})
             return (
                 px.histogram(
                     frame,
-                    x="Value",
+                    x=metric,
                     nbins=20,
                     title=f"Distribution of {metric}",
                     color_discrete_sequence=["#06b6d4"],
@@ -488,7 +511,7 @@ def chart_for(
             "Missingness by field",
         )
 
-    if chart_type in {"Count", "Auto", "Bar", "Line", "Scatter", "Histogram"}:
+    if chart_type in {"Count", "Bar", "Line", "Scatter", "Histogram"}:
         return fallback_count(
             f"{chart_type} view was unavailable for this schema."
         )
