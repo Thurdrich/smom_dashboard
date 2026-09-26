@@ -662,6 +662,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                 ),
             }
         ).dropna().sort_values("Date")
+        raw_trend["Date"] = raw_trend["Date"].dt.normalize()
         trend_coverage = len(raw_trend) / max(len(data), 1)
         trend = raw_trend
 
