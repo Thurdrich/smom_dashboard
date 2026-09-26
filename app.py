@@ -9,7 +9,7 @@ import plotly.express as px
 import streamlit as st
 
 st.set_page_config(
-    page_title="SMOM | Strategic Insight Studio",
+    page_title="SMOM | Manpower & Travel Readiness Studio",
     page_icon="⚓",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -48,6 +48,20 @@ DATE_WORDS = (
     "end",
     "arrival",
     "departure",
+    "embark",
+    "debark",
+    "underway",
+    "in port",
+    "deployment",
+    "tdy",
+    "orders",
+    "leave",
+    "liberty",
+    "pcs",
+    "duty station",
+    "voucher",
+    "itinerary",
+    "port call",
     "request",
     "created",
     "received",
@@ -56,7 +70,8 @@ DATE_WORDS = (
 
 SENSITIVE_WORDS = (
     r"name|employee|person|lname|fname|first.?name|last.?name|"
-    r"civmar.?/per"
+    r"civmar.?/per|employee.?id|crew.?id|dodid|passport|"
+    r"travel.?voucher|orders?.?(id|number)"
 )
 
 RECOMMENDATION_PATTERN = re.compile(
@@ -74,40 +89,6 @@ RECOMMENDATION_PATTERN = re.compile(
     r"\bwhat(?:'s| is) (?:our |the )?priority\b",
     re.I,
 )
-
-
-def demo_data():
-    rng = np.random.default_rng(7)
-
-    dates = pd.date_range(
-        end=pd.Timestamp.today().normalize(),
-        periods=180,
-        freq="D",
-    )
-
-    workload = rng.normal(72, 18, 180).clip(10, 140).round(1)
-    staffing = (workload * rng.normal(.91, .12, 180)).clip(5, 150).round(1)
-
-    return pd.DataFrame(
-        {
-            "Date": dates,
-            "Region": rng.choice(
-                ["North", "South", "East", "West"],
-                180,
-            ),
-            "Workload": workload,
-            "Staffing": staffing,
-            "Readiness": (
-                100 - (workload - staffing).clip(0) * 1.7
-            ).clip(35, 100).round(1),
-            "Priority": rng.choice(
-                ["Routine", "Elevated", "Critical"],
-                180,
-                p=[.55, .3, .15],
-            ),
-        }
-    )
-
 
 @st.cache_data(show_spinner=False)
 def read_upload(file_name, file_bytes):
@@ -291,13 +272,35 @@ def best_category(data, categorical):
     preferred = (
         "status",
         "location",
+        "unit",
+        "command",
         "ship",
         "vessel",
+        "hull",
+        "port",
+        "billet",
+        "rate",
+        "rank",
+        "manning",
+        "crew",
+        "watch",
+        "berthing",
+        "tdy",
+        "orders",
+        "travel",
+        "leave",
+        "liberty",
+        "pcs",
+        "duty station",
+        "itinerary",
+        "deployment",
+        "underway",
+        "in port",
         "arrival",
         "departure",
         "employee",
         "type",
-        "travel writer",
+        "travel voucher",
     )
 
     return (
@@ -354,6 +357,88 @@ def metric_direction(column_name):
         return "higher_is_better"
 
     return "unknown"
+
+
+def maritime_context(data):
+    names = " ".join(map(str, data.columns)).lower()
+    return {
+        "crew": any(
+            word in names
+            for word in (
+                "billet",
+                "rate",
+                "rank",
+                "manning",
+                "crew",
+                "watch",
+                "berthing",
+            )
+        ),
+        "travel": any(
+            word in names
+            for word in (
+                "tdy",
+                "orders",
+                "leave",
+                "liberty",
+                "pcs",
+                "duty station",
+                "travel voucher",
+                "travel",
+                "per diem",
+                "itinerary",
+            )
+        ),
+        "port": any(
+            word in names
+            for word in (
+                "vessel",
+                "hull",
+                "port",
+                "embark",
+                "debark",
+                "deployment",
+                "underway",
+                "in port",
+                "ship",
+                "unit",
+                "command",
+            )
+        ),
+    }
+
+
+def domain_terms(data):
+    context = maritime_context(data)
+    if context["crew"] and context["travel"]:
+        return {
+            "records": "crew and travel records",
+            "segment": "crew/travel segment",
+            "focus": "manning and TDY/travel readiness",
+        }
+    if context["crew"]:
+        return {
+            "records": "billets",
+            "segment": "crew segment",
+            "focus": "manning readiness",
+        }
+    if context["travel"]:
+        return {
+            "records": "travel requests",
+            "segment": "travel segment",
+            "focus": "TDY/travel execution",
+        }
+    if context["port"]:
+        return {
+            "records": "port movements",
+            "segment": "port segment",
+            "focus": "port readiness",
+        }
+    return {
+        "records": "records",
+        "segment": "segment",
+        "focus": "operations",
+    }
 
 
 def best_matching_column(data, candidates, include_words, exclude_words=()):
@@ -487,6 +572,8 @@ def recommend_actions(data, numeric, dates, categorical, text):
     recommendations = []
     row_count = len(data)
     quality_fields = []
+    terms = domain_terms(data)
+    maritime_mode = terms["records"] != "records"
 
     category = best_category(data, categorical)
     if category and category in data:
@@ -513,8 +600,8 @@ def recommend_actions(data, numeric, dates, categorical, text):
                         "Concentration warrants segment planning",
                         (
                             f"`{safe_top_label}` accounts for {top_share:.1%} of the current "
-                            f"`{safe_category}` volume, which suggests the workload is concentrated "
-                            "in one segment."
+                            f"`{safe_category}` volume, which suggests {terms['focus']} is concentrated "
+                            f"in one {terms['segment']}."
                         ),
                         (
                             "Bias near-term capacity and review effort toward this segment, "
@@ -523,7 +610,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                         ),
                         confidence,
                         evidence=(
-                            f"{top_count:,} of {row_count:,} rows fall into `{safe_top_label}`."
+                            f"{top_count:,} of {row_count:,} {terms['records']} fall into `{safe_top_label}`."
                         ),
                         priority=signal_strength,
                     )
@@ -643,13 +730,20 @@ def recommend_actions(data, numeric, dates, categorical, text):
                         "Operational gap needs coverage planning",
                         (
                             f"Average `{safe_workload_column}` exceeds `{safe_staffing_column}` by "
-                            f"{mean_gap:.1f}{readiness_clause}, indicating the operating "
+                            f"{mean_gap:.1f}{readiness_clause}, indicating "
+                            f"{'manning/travel' if maritime_mode else 'operating'} "
                             "buffer may be under pressure."
                         ),
                         (
-                            "Prepare surge support or reassignment for the highest-load "
-                            "segments and set a simple escalation rule when the workload-to-"
-                            "staffing gap stays above the recent norm."
+                            (
+                                "Prepare surge support or reassignment for the highest-load crew/travel "
+                                "segments and set a simple escalation rule when the workload-to-staffing "
+                                "gap stays above the recent norm."
+                                if maritime_mode
+                                else "Prepare surge support or reassignment for the highest-load "
+                                "segments and set a simple escalation rule when the workload-to-"
+                                "staffing gap stays above the recent norm."
+                            )
                         ),
                         confidence,
                         evidence=(
@@ -715,9 +809,15 @@ def recommend_actions(data, numeric, dates, categorical, text):
                     ):
                         title = "Recent trend shows deterioration"
                         action = (
-                            "Trigger a short-horizon mitigation review, check what changed "
-                            "in the most recent period, and monitor this metric until it "
-                            "moves back toward baseline."
+                            (
+                                "Trigger a short-horizon readiness review, check what changed in the "
+                                "most recent watch/port/travel period, and monitor this metric until "
+                                "it moves back toward baseline."
+                                if maritime_mode
+                                else "Trigger a short-horizon mitigation review, check what changed "
+                                "in the most recent period, and monitor this metric until it "
+                                "moves back toward baseline."
+                            )
                         )
                     elif (
                         direction == "higher_is_worse"
@@ -728,16 +828,28 @@ def recommend_actions(data, numeric, dates, categorical, text):
                     ):
                         title = "Recent trend is improving"
                         action = (
-                            "Sustain the current operating pattern, capture what changed in "
-                            "the stronger period, and standardize it where similar segments "
-                            "show the same conditions."
+                            (
+                                "Sustain the current operating pattern, capture what changed in the "
+                                "stronger period, and standardize it where similar billets, crews, "
+                                "or travel queues show the same conditions."
+                                if maritime_mode
+                                else "Sustain the current operating pattern, capture what changed in "
+                                "the stronger period, and standardize it where similar segments "
+                                "show the same conditions."
+                            )
                         )
                     else:
                         title = "Recent trend moved materially"
                         action = (
-                            "Use this as a monitoring signal, but verify whether higher or "
-                            "lower values are desirable for this metric before changing "
-                            "operations."
+                            (
+                                "Use this as a monitoring signal, but verify whether higher or lower "
+                                "values are desirable for this metric before changing manning/travel "
+                                "operations."
+                                if maritime_mode
+                                else "Use this as a monitoring signal, but verify whether higher or "
+                                "lower values are desirable for this metric before changing "
+                                "operations."
+                            )
                         )
 
                     confidence = confidence_label(
@@ -794,8 +906,13 @@ def recommend_actions(data, numeric, dates, categorical, text):
                         "as directional rather than definitive."
                     ),
                     (
-                        "Improve source capture or backfill the highest-missing operational "
-                        "fields before making major staffing, readiness, or segment-level decisions."
+                        (
+                            "Improve source capture or backfill the highest-missing operational "
+                            "fields before making major billet, readiness, or travel-priority decisions."
+                            if maritime_mode
+                            else "Improve source capture or backfill the highest-missing operational "
+                            "fields before making major staffing, readiness, or segment-level decisions."
+                        )
                     ),
                     confidence,
                     evidence=(
@@ -815,7 +932,11 @@ def recommend_actions(data, numeric, dates, categorical, text):
             recommendation_record(
                 "No strong recommendation signal yet",
                 "This filtered slice does not show a stable concentration, operating gap, or directional trend large enough to justify a stronger action call.",
-                "Use the chart and filter controls to inspect smaller cohorts or narrower time windows for localized issues before changing operations.",
+                (
+                    "Use the chart and filter controls to inspect smaller cohorts or narrower time windows for localized billet, travel, or port readiness issues before changing operations."
+                    if maritime_mode
+                    else "Use the chart and filter controls to inspect smaller cohorts or narrower time windows for localized issues before changing operations."
+                ),
                 fallback_confidence,
                 priority=.08,
             )
@@ -1195,6 +1316,7 @@ def charts_for(data, numeric, dates, categorical):
 
 def insights(data, numeric, dates, categorical, text):
     findings = []
+    terms = domain_terms(data)
 
     if categorical:
         category = best_category(data, categorical)
@@ -1202,8 +1324,8 @@ def insights(data, numeric, dates, categorical, text):
 
         if len(counts):
             findings.append(
-                f"**{counts.index[0]}** is the largest `{category}` segment "
-                f"at **{counts.iloc[0] / len(data):.1%}** of records."
+                f"**{counts.index[0]}** is the largest `{category}` {terms['segment']} "
+                f"at **{counts.iloc[0] / len(data):.1%}** of {terms['records']}."
             )
 
     if dates:
@@ -1294,11 +1416,16 @@ def mask_sensitive(frame, columns=None):
 def local_answer(question, data, numeric, dates, categorical, text):
     q = question.lower().strip()
     category = best_category(data, categorical)
+    terms = domain_terms(data)
 
     if data.empty:
         return (
             "The current filters return no rows, so there is nothing reliable to "
-            "summarize or recommend yet."
+            + (
+                "summarize for manning, travel, or readiness yet."
+                if terms["records"] != "records"
+                else "summarize or recommend yet."
+            )
         )
 
     if any(word in q for word in ("chart", "graph", "visual", "plot")):
@@ -1330,6 +1457,25 @@ def local_answer(question, data, numeric, dates, categorical, text):
             )
         )
 
+    if any(
+        phrase in q
+        for phrase in (
+            "manning gap",
+            "travel backlog",
+            "tdy backlog",
+            "port readiness",
+        )
+    ):
+        return format_recommendations(
+            cached_recommend_actions(
+                data,
+                tuple(numeric),
+                tuple(dates),
+                tuple(categorical),
+                tuple(text),
+            )
+        )
+
     if "missing" in q or "quality" in q:
         missing = data.isna().mean().sort_values(ascending=False)
         top = missing.head(5)
@@ -1341,7 +1487,7 @@ def local_answer(question, data, numeric, dates, categorical, text):
 
     if "how many" in q or "rows" in q or "records" in q:
         return (
-            f"The current filtered dataset contains {len(data):,} rows "
+            f"The current filtered dataset contains {len(data):,} {terms['records']} "
             f"across {len(data.columns):,} fields."
         )
 
@@ -1359,8 +1505,8 @@ def local_answer(question, data, numeric, dates, categorical, text):
         counts = clean_label(data[category]).value_counts()
 
         return (
-            f"The largest {category} segment is {counts.index[0]} with "
-            f"{counts.iloc[0]:,} records "
+            f"The largest {category} {terms['segment']} is {counts.index[0]} with "
+            f"{counts.iloc[0]:,} {terms['records']} "
             f"({counts.iloc[0] / len(data):.1%})."
         )
 
@@ -1378,8 +1524,11 @@ def local_answer(question, data, numeric, dates, categorical, text):
         )
 
     return (
-        "I can answer questions about row counts, missingness, detected dates, "
-        "categories, numeric summaries, and chart choices using only this dataset."
+        (
+            "I can answer questions about counts, missingness, date coverage, largest segments, recommendation priorities, and chart choices for this manpower/travel readiness dataset."
+            if terms["records"] != "records"
+            else "I can answer questions about row counts, missingness, detected dates, categories, numeric summaries, and chart choices using only this dataset."
+        )
     )
 
 
@@ -1399,15 +1548,11 @@ with st.sidebar:
 
 
 uploaded_data, errors = load_uploads(uploads)
-
-using_demo = uploaded_data.empty
-
-analysis_data = demo_data() if using_demo else uploaded_data
-
+analysis_data = uploaded_data
 detected_sensitive = (
-    []
-    if using_demo
-    else sensitive_columns(analysis_data)
+    sensitive_columns(analysis_data)
+    if not analysis_data.empty
+    else []
 )
 
 mask_names = True
@@ -1427,6 +1572,22 @@ if detected_sensitive:
         key="sensitive_data_choice",
     ).startswith("Mask")
 
+st.title("⚓ SMOM | Manpower & Travel Readiness Studio")
+
+st.caption(
+    "Maritime manpower and travel tracking insights with a local data assistant—"
+    "no external API or data transfer."
+)
+
+for error in errors:
+    st.warning(error)
+
+if analysis_data.empty:
+    st.info(
+        "Upload a maritime manpower/travel dataset to begin (for example: "
+        "manning rosters, TDY/travel requests, port call schedules, or readiness reports)."
+    )
+    st.stop()
 
 numeric, dates, categorical, text = profile(analysis_data)
 
@@ -1446,7 +1607,6 @@ with st.sidebar:
             filterable_categories.append(value)
 
     for column in filterable_categories[:4]:
-
         values = sorted(
             clean_label(analysis_data[column]).unique().tolist()
         )
@@ -1466,29 +1626,11 @@ for column, values in selected.items():
             clean_label(filtered[column]).isin(values)
         ]
 
-
-st.title("⚓ Strategic Insight Studio")
-
-st.caption(
-    "Focused operational analysis with a local data assistant—"
-    "no external API or data transfer."
+st.success(
+    f"Analyzing {len(uploads)} file(s), "
+    f"{len(filtered):,} filtered rows, and "
+    f"{len(filtered.columns):,} fields."
 )
-
-if using_demo:
-    st.info(
-        "Preview mode: upload your file to replace the illustrative data."
-    )
-
-else:
-    st.success(
-        f"Analyzing {len(uploads)} file(s), "
-        f"{len(filtered):,} filtered rows, and "
-        f"{len(filtered.columns):,} fields."
-    )
-
-for error in errors:
-    st.warning(error)
-
 
 missing_rate = (
     float(filtered.isna().mean().mean())
@@ -1573,7 +1715,7 @@ with st.expander("Ask the local data assistant", expanded=True):
             st.markdown(message["content"])
 
     question = st.chat_input(
-        "Ask about this data or request a chart change…"
+        "Ask about manning gaps, travel backlog, readiness trends, or request a chart change…"
     )
 
     if question:
@@ -1749,9 +1891,9 @@ with st.expander("Attention queue and prepared data"):
 
         st.dataframe(
             (
-                mask_sensitive(queue.head(200), detected_sensitive)
+                mask_sensitive(queue.head(50), detected_sensitive)
                 if mask_names
-                else queue.head(200)
+                else queue.head(50)
             ),
             use_container_width=True,
             hide_index=True,
@@ -1766,22 +1908,49 @@ with st.expander("Attention queue and prepared data"):
         else filtered
     )
 
-    st.dataframe(
-        prepared.head(500),
-        use_container_width=True,
-        hide_index=True,
+    snapshot_metrics = st.columns(3)
+    snapshot_metrics[0].metric("Prepared rows", f"{len(prepared):,}")
+    snapshot_metrics[1].metric("Prepared fields", f"{len(prepared.columns):,}")
+    snapshot_metrics[2].metric(
+        "Masked ID fields",
+        f"{len(detected_sensitive) if mask_names else 0}",
     )
+
+    missing_summary = (
+        prepared.isna().mean().sort_values(ascending=False).head(10)
+    )
+    if len(missing_summary):
+        st.caption("Top missingness fields in prepared data")
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "Field": missing_summary.index,
+                    "Missing rate": missing_summary.values,
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    show_raw_prepared = st.checkbox(
+        "Show raw prepared sample (first 75 rows)",
+        value=False,
+    )
+    if show_raw_prepared:
+        st.dataframe(
+            prepared.head(75),
+            use_container_width=True,
+            hide_index=True,
+        )
 
     st.download_button(
         "Download prepared view",
         prepared.to_csv(index=False).encode("utf-8"),
-        "strategic_analysis_data.csv",
+        "smom_manpower_travel_prepared_data.csv",
         "text/csv",
     )
 
 
-if not using_demo:
-    st.caption(
-        "No-BS rule: charts identify patterns; verify underlying records "
-        "before operational decisions."
-    )
+st.caption(
+    "No-BS rule: charts identify patterns; verify underlying records before operational decisions."
+)

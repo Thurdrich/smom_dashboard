@@ -1,6 +1,6 @@
-# SMOM Dashboard
+# SMOM Manpower & Travel Readiness Dashboard
 
-SMOM Dashboard is now a general-purpose Streamlit **Strategic Insight Studio**. Upload one or more tabular datasets and the app automatically profiles them, offers a data-soundness note, and selects four adaptive charts to reveal trends, concentrations, relationships, and outliers.
+SMOM Dashboard is a Streamlit **Manpower & Travel Readiness Studio** for maritime operations. Upload one or more manpower/travel datasets and the app profiles them, highlights readiness signals, and selects four adaptive charts to reveal trends, concentrations, relationships, and outliers.
 
 ## Supported uploads
 
@@ -8,7 +8,7 @@ SMOM Dashboard is now a general-purpose Streamlit **Strategic Insight Studio**. 
 - Excel (`.xlsx`, `.xls`)
 - JSON (`.json`)
 
-Multiple files can be uploaded at once. They are combined by column name, with a `Source file` field added so the result remains traceable. Before an upload, the app displays an illustrative preview dataset.
+Multiple files can be uploaded at once. They are combined by column name, with a `Source file` field added so the result remains traceable. The app only analyzes uploaded data (no demo/preview fallback dataset).
 
 ## Run locally
 
