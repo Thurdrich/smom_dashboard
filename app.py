@@ -620,6 +620,7 @@ def charts_for(data, numeric, dates, categorical):
         is_fallback = "instead." in explanation
         if is_fallback and explanation in fallback_signatures:
             chart, explanation = alternate_fallback(kind)
+            is_fallback = "instead." in explanation
         if is_fallback:
             fallback_signatures.add(explanation)
 
@@ -961,11 +962,6 @@ with st.sidebar:
     y_column = None
 
     if show_focused_chart:
-        x_field_options = []
-        for field in categorical + dates:
-            if field not in x_field_options:
-                x_field_options.append(field)
-
         chart_type = st.selectbox(
             "Chart type",
             [
@@ -977,6 +973,18 @@ with st.sidebar:
             ],
             help="Each chart uses at most one or two fields to stay readable.",
         )
+
+        if chart_type == "Scatter":
+            x_candidates = numeric
+        elif chart_type == "Line":
+            x_candidates = dates + categorical
+        else:
+            x_candidates = categorical + dates
+
+        x_field_options = []
+        for field in x_candidates:
+            if field not in x_field_options:
+                x_field_options.append(field)
 
         x_column = st.selectbox(
             "Category / X field",
