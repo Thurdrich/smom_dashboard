@@ -427,8 +427,10 @@ def chart_for(
     if chart_type == "Scatter" and len(numeric) >= 2:
         x = x_column if x_column in numeric else numeric[0]
         y = y_column if y_column in numeric else numeric[1]
-        if x == y and len(numeric) >= 2:
-            y = numeric[1]
+        if x == y:
+            alternatives = [column for column in numeric if column != x]
+            if alternatives:
+                y = alternatives[0]
 
         frame = pd.DataFrame(
             {
@@ -470,7 +472,7 @@ def chart_for(
 
     if chart_type == "Quality":
         missing = data.isna().mean().sort_values().tail(12).sort_values()
-        if not len(missing):
+        if not len(missing) or missing.max() <= 0:
             return fallback_count(
                 "Quality view was unavailable for this schema."
             )
