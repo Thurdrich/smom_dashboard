@@ -739,8 +739,15 @@ def recommend_actions(data, numeric, dates, categorical, text):
             )
 
             top_group = active_groups.sort_values(
-                "priority_score",
-                ascending=False,
+                [
+                    "priority_score",
+                    "traffic_count",
+                    "traffic_intensity",
+                    "importance_avg",
+                    "rating",
+                    "port",
+                ],
+                ascending=[False, False, False, False, True, True],
             ).iloc[0]
 
             missingness = (
@@ -834,27 +841,11 @@ def recommend_actions(data, numeric, dates, categorical, text):
             )
 
             if len(underway_groups):
-                safe_threshold = (
-                    underway_groups.groupby(rating_column)[
-                        "underway_count"
-                    ]
-                    .quantile(0.25)
-                    .apply(np.ceil)
-                    .astype(int)
-                    .rename("safe_threshold")
-                    .reset_index()
-                )
-                onboard_rating = (
-                    current_groups.groupby(rating_column)[
-                        "onboard_count"
-                    ]
-                    .sum()
-                    .rename("onboard_count")
-                    .reset_index()
-                )
-                safe_check = safe_threshold.merge(
-                    onboard_rating,
-                    on=rating_column,
+                safe_check = underway_groups.rename(
+                    columns={"underway_count": "safe_threshold"}
+                ).merge(
+                    current_groups,
+                    on=key_columns,
                     how="left",
                 ).fillna({"onboard_count": 0})
                 safe_check["deficit"] = (
@@ -868,8 +859,13 @@ def recommend_actions(data, numeric, dates, categorical, text):
                         ascending=False,
                     ).iloc[0]
                     go_status = (
-                        "GOGO" if safe_check["deficit"].max() <= 0 else "NO-GO"
+                        "GO" if safe_check["deficit"].max() <= 0 else "NO-GO"
                     )
+                    unit_parts = [
+                        f"{column}: {worst[column]}"
+                        for column in key_columns
+                    ]
+                    unit_label = ", ".join(unit_parts)
                     signal_strength = float(
                         min(
                             1.0,
@@ -889,8 +885,8 @@ def recommend_actions(data, numeric, dates, categorical, text):
                         recommendation_record(
                             "ABS-safe shipboard ratings check before underway",
                             (
-                                f"{go_status} readiness check for `{escape_markdown(str(worst[rating_column]))}` "
-                                "against the underway baseline."
+                                f"{go_status} readiness check for `{escape_markdown(unit_label)}` "
+                                "against the same-unit underway baseline."
                             ),
                             (
                                 "Use this baseline as the minimum shipboard rating threshold from any port "
