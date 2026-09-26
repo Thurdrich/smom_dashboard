@@ -86,6 +86,11 @@ RECOMMENDATION_PATTERN = re.compile(
     re.I,
 )
 
+PLOTLY_CHART_CONFIG = {
+    "displayModeBar": True,
+    "displaylogo": False,
+}
+
 @st.cache_data(show_spinner=False)
 def read_upload(file_name, file_bytes):
     suffix = Path(file_name).suffix.lower()
@@ -251,6 +256,108 @@ def clean_label(series):
         .str.strip()
         .replace({"": "Missing"})
     )
+
+
+def apply_chart_layout(chart):
+    title = {}
+    if getattr(chart.layout, "title", None):
+        title = chart.layout.title.to_plotly_json()
+
+    title.update(
+        {
+            "x": 0.02,
+            "xanchor": "left",
+            "y": 0.96,
+            "yanchor": "top",
+            "pad": {"t": 12, "b": 0},
+        }
+    )
+
+    chart.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(21,29,63,.3)",
+        font=dict(color="#f0f9ff"),
+        legend=dict(font=dict(color="#f0f9ff")),
+        margin=dict(l=20, r=20, t=90, b=20),
+        title=title,
+    )
+
+    return chart
+
+
+def chart_series(data, column, numeric, dates, categorical):
+    if column not in data.columns:
+        return pd.Series(dtype=object)
+
+    if column in numeric:
+        return pd.to_numeric(
+            data[column].astype(str).str.replace(",", "", regex=False),
+            errors="coerce",
+        )
+
+    if column in dates:
+        return parse_dates(data[column], column)
+
+    if column in categorical:
+        return clean_label(data[column])
+
+    return data[column]
+
+
+def build_chart_working_copy(data, numeric, categorical):
+    chart_data = data.copy()
+    filled_columns = set()
+
+    for column in numeric:
+        if column not in chart_data.columns:
+            continue
+
+        numeric_values = pd.to_numeric(
+            chart_data[column].astype(str).str.replace(",", "", regex=False),
+            errors="coerce",
+        )
+
+        if numeric_values.notna().any():
+            filled_values = (
+                numeric_values.interpolate(
+                    method="linear",
+                    limit_direction="both",
+                )
+                .ffill()
+                .bfill()
+            )
+        else:
+            filled_values = numeric_values
+
+        if filled_values.notna().sum() > numeric_values.notna().sum():
+            filled_columns.add(column)
+
+        chart_data[column] = filled_values
+
+    for column in categorical:
+        if column not in chart_data.columns:
+            continue
+
+        normalized = chart_data[column].replace({"": np.nan})
+        non_null = normalized.dropna()
+        if non_null.empty:
+            continue
+
+        mode = non_null.mode(dropna=True)
+        fill_value = mode.iloc[0] if not mode.empty else non_null.iloc[0]
+        filled_values = normalized.fillna(fill_value)
+
+        if filled_values.notna().sum() > normalized.notna().sum():
+            filled_columns.add(column)
+
+        chart_data[column] = filled_values
+
+    return chart_data, filled_columns
+
+
+def chart_uses_interpolation(columns, filled_columns):
+    return bool(set(columns) & set(filled_columns))
 
 
 def best_category(data, categorical):
@@ -1045,7 +1152,7 @@ def chart_for(
     def numeric_values(column):
         if column not in numeric_cache:
             numeric_cache[column] = pd.to_numeric(
-                data[column],
+                data[column].astype(str).str.replace(",", "", regex=False),
                 errors="coerce",
             )
         return numeric_cache[column]
@@ -1087,6 +1194,7 @@ def chart_for(
                     color_discrete_sequence=["#a855f7"],
                 ),
                 f"{reason} Showing counts by source file instead.",
+                ["Source file"],
             )
 
         summary = pd.DataFrame(
@@ -1109,6 +1217,7 @@ def chart_for(
                 },
             ),
             f"{reason} Showing a dataset summary instead.",
+            [],
         )
 
     def best_metric_column():
@@ -1140,7 +1249,7 @@ def chart_for(
             if not is_possible:
                 continue
 
-            chart, note = chart_for(
+            chart, note, relevant_columns = chart_for(
                 data,
                 numeric,
                 dates,
@@ -1150,7 +1259,7 @@ def chart_for(
                 y_column,
             )
             if "unavailable for this schema" not in note:
-                return chart, note
+                return chart, note, relevant_columns
 
         return fallback_count(
             "Auto view was unavailable for this schema."
@@ -1175,6 +1284,7 @@ def chart_for(
                     color_discrete_sequence=["#a855f7"],
                 ),
                 f"Top segments in {category}",
+                [category],
             )
 
     if chart_type == "Line" and dates and metric:
@@ -1213,6 +1323,7 @@ def chart_for(
                     color_discrete_sequence=["#06b6d4"],
                 ),
                 "Time trend from one date and one numeric field",
+                [date_column, metric],
             )
 
     if chart_type == "Scatter" and len(numeric) >= 2:
@@ -1282,6 +1393,7 @@ def chart_for(
                     color_discrete_sequence=["#ec4899"],
                 ),
                 "Relationship between two numeric fields",
+                [x, y],
             )
 
     if chart_type == "Box" and metric and category:
@@ -1311,6 +1423,7 @@ def chart_for(
                         color_discrete_sequence=["#ec4899"],
                     ),
                     "Distribution spread by category",
+                    [category, metric],
                 )
 
     if chart_type == "CountTimeline" and dates:
@@ -1348,6 +1461,7 @@ def chart_for(
                         color_discrete_sequence=["#06b6d4"],
                     ),
                     "Record-volume trend across the detected time field",
+                    [date_column],
                 )
 
     if chart_type == "Histogram" and metric:
@@ -1364,6 +1478,7 @@ def chart_for(
                     color_discrete_sequence=["#06b6d4"],
                 ),
                 f"Distribution of {metric}",
+                [metric],
             )
 
     if chart_type == "Signal":
@@ -1388,6 +1503,7 @@ def chart_for(
                 color_discrete_sequence=["#f43f5e"],
             ),
             "Relative signal strength by field",
+            [column for column in numeric + categorical if column in data.columns],
         )
 
     if chart_type in {"Count", "Bar", "Line", "Scatter", "Histogram", "Box", "CountTimeline"}:
@@ -1443,6 +1559,7 @@ def charts_for(data, numeric, dates, categorical):
                     color_discrete_sequence=["#06b6d4"],
                 ),
                 "Fallback trend when no date/metric pair is available.",
+                [],
             )
 
         cardinality = (
@@ -1467,6 +1584,7 @@ def charts_for(data, numeric, dates, categorical):
                         color_discrete_sequence=["#ec4899"],
                     ),
                     "Distinct-value comparison across fields.",
+                    frame["Field"].tolist(),
                 )
             return (
                 px.bar(
@@ -1478,6 +1596,7 @@ def charts_for(data, numeric, dates, categorical):
                     color_discrete_sequence=["#a855f7"],
                 ),
                 "Fallback schema summary across available fields.",
+                frame["Field"].tolist(),
             )
 
         return chart_for(
@@ -1510,9 +1629,10 @@ def charts_for(data, numeric, dates, categorical):
     for slot_kinds in choices:
         chart = None
         explanation = ""
+        relevant_columns = []
         for kind in slot_kinds:
             x_default, y_default = default_axes(kind)
-            chart, explanation = chart_for(
+            chart, explanation, relevant_columns = chart_for(
                 data,
                 numeric,
                 dates,
@@ -1532,7 +1652,7 @@ def charts_for(data, numeric, dates, categorical):
             or "unavailable for this schema" in explanation
         )
         if is_fallback and explanation in fallback_signatures:
-            chart, explanation = alternate_fallback(slot_kinds[0])
+            chart, explanation, relevant_columns = alternate_fallback(slot_kinds[0])
             is_fallback = (
                 "instead." in explanation
                 or "unavailable for this schema" in explanation
@@ -1540,9 +1660,182 @@ def charts_for(data, numeric, dates, categorical):
         if is_fallback:
             fallback_signatures.add(explanation)
 
-        charts.append((chart, explanation))
+        charts.append((chart, explanation, relevant_columns))
 
     return charts
+
+
+def build_custom_chart(
+    data,
+    numeric,
+    dates,
+    categorical,
+    chart_type,
+    x_column,
+    y_column=None,
+    color_column=None,
+    facet_column=None,
+    size_column=None,
+):
+    if x_column not in data.columns:
+        return None, "Select a valid X-axis column.", []
+
+    y_required = chart_type != "Histogram"
+    if y_required and y_column not in data.columns:
+        return None, "Select a valid Y-axis column to render this chart.", [x_column]
+
+    if chart_type in {"Scatter", "Histogram"} and x_column not in numeric:
+        return None, f"`{x_column}` must be numeric for a {chart_type.lower()} chart.", [x_column]
+
+    if chart_type in {"Bar", "Line", "Box", "Area"} and y_column not in numeric:
+        return None, f"`{y_column}` must be numeric for a {chart_type.lower()} chart.", [x_column, y_column]
+
+    if chart_type == "Scatter" and y_column not in numeric:
+        return None, f"`{y_column}` must be numeric for a scatter chart.", [x_column, y_column]
+
+    relevant_columns = [
+        column
+        for column in (x_column, y_column, color_column, facet_column, size_column)
+        if column in data.columns
+    ]
+    frame = pd.DataFrame(index=data.index)
+    frame["X"] = chart_series(data, x_column, numeric, dates, categorical)
+
+    required = ["X"]
+    if y_required:
+        frame["Y"] = chart_series(data, y_column, numeric, dates, categorical)
+        required.append("Y")
+
+    if color_column in data.columns:
+        frame["Color"] = chart_series(data, color_column, numeric, dates, categorical)
+
+    if facet_column in data.columns:
+        frame["Facet"] = chart_series(data, facet_column, numeric, dates, categorical)
+
+    if size_column in data.columns:
+        frame["Size"] = chart_series(data, size_column, numeric, dates, categorical)
+
+    frame = frame.dropna(subset=required)
+
+    minimum_rows = 5 if chart_type in {"Line", "Scatter", "Area"} else 2
+    if len(frame) < minimum_rows:
+        return (
+            None,
+            "Not enough overlapping data between selected columns to render this chart.",
+            relevant_columns,
+        )
+
+    if chart_type == "Scatter":
+        if frame["X"].nunique(dropna=True) < 2 or frame["Y"].nunique(dropna=True) < 2:
+            return (
+                None,
+                "Not enough overlapping data between selected columns to render this chart.",
+                relevant_columns,
+            )
+        return (
+            px.scatter(
+                frame,
+                x="X",
+                y="Y",
+                color="Color" if "Color" in frame else None,
+                facet_col="Facet" if "Facet" in frame else None,
+                size="Size" if "Size" in frame else None,
+                title=f"{x_column} vs {y_column}",
+                color_discrete_sequence=["#ec4899"],
+            ),
+            f"Custom scatter using `{x_column}` and `{y_column}`.",
+            relevant_columns,
+        )
+
+    if chart_type == "Histogram":
+        if frame["X"].nunique(dropna=True) < 1:
+            return (
+                None,
+                "Not enough overlapping data between selected columns to render this chart.",
+                relevant_columns,
+            )
+        return (
+            px.histogram(
+                frame,
+                x="X",
+                color="Color" if "Color" in frame else None,
+                facet_col="Facet" if "Facet" in frame else None,
+                nbins=20,
+                title=f"Distribution of {x_column}",
+                color_discrete_sequence=["#06b6d4"],
+            ),
+            f"Custom histogram using `{x_column}`.",
+            relevant_columns,
+        )
+
+    aggregate = frame.copy()
+    if x_column in dates:
+        aggregate["X"] = aggregate["X"].dt.normalize()
+
+    if chart_type in {"Bar", "Line", "Area"}:
+        group_fields = ["X"]
+        if "Color" in aggregate:
+            group_fields.append("Color")
+        if "Facet" in aggregate:
+            group_fields.append("Facet")
+
+        aggregate = aggregate.groupby(
+            group_fields,
+            dropna=False,
+            as_index=False,
+        )["Y"].agg(
+            "sum"
+            if chart_type == "Bar"
+            else "mean"
+        )
+
+        if x_column in dates:
+            aggregate = aggregate.sort_values("X")
+        elif chart_type == "Bar":
+            aggregate = aggregate.sort_values("Y", ascending=False).head(20)
+
+        common_kwargs = {
+            "data_frame": aggregate,
+            "x": "X",
+            "y": "Y",
+            "color": "Color" if "Color" in aggregate else None,
+            "facet_col": "Facet" if "Facet" in aggregate else None,
+            "title": f"{y_column} by {x_column}",
+            "color_discrete_sequence": ["#06b6d4", "#a855f7", "#ec4899"],
+        }
+
+        if chart_type == "Bar":
+            figure = px.bar(**common_kwargs)
+        elif chart_type == "Line":
+            figure = px.line(
+                **common_kwargs,
+                markers=True,
+            )
+        else:
+            figure = px.area(**common_kwargs)
+
+        return (
+            figure,
+            f"Custom {chart_type.lower()} using `{x_column}` and `{y_column}`.",
+            relevant_columns,
+        )
+
+    if chart_type == "Box":
+        return (
+            px.box(
+                frame,
+                x="X",
+                y="Y",
+                color="Color" if "Color" in frame else None,
+                facet_col="Facet" if "Facet" in frame else None,
+                title=f"{y_column} variation by {x_column}",
+                color_discrete_sequence=["#ec4899", "#06b6d4", "#a855f7"],
+            ),
+            f"Custom box plot using `{x_column}` and `{y_column}`.",
+            relevant_columns,
+        )
+
+    return None, f"{chart_type} is not supported in the custom builder yet.", relevant_columns
 
 
 def insights(data, numeric, dates, categorical, text):
@@ -1645,8 +1938,8 @@ def local_answer(question, data, numeric, dates, categorical, text):
             return "Use Histogram to inspect the distribution of one numeric field."
 
         return (
-            "Use the optional focused chart controls below this chat to select "
-            "a custom chart type and fields."
+            "Use the focused chart controls or the Build your own chart section "
+            "to select a custom chart type and fields."
         )
 
     if is_recommendation_request(q):
@@ -1873,6 +2166,17 @@ else "Signal profile is moderate; refine filters to strengthen predictions."}
 st.subheader("Adaptive four-chart overview")
 
 with st.sidebar:
+    st.subheader("Chart data options")
+    fill_missing_for_charts = st.checkbox(
+        "Fill missing data to improve chart options",
+        value=False,
+        help=(
+            "Only chart rendering uses this working copy. Numeric fields are linearly "
+            "interpolated and edge gaps are forward/back-filled; categorical gaps use "
+            "the most frequent value."
+        ),
+    )
+
     st.subheader("Focused chart (optional)")
 
     show_focused_chart = st.checkbox(
@@ -1927,8 +2231,14 @@ with st.sidebar:
         y_column = None if y_column == "None" else y_column
 
 
+chart_data, chart_filled_columns = (
+    build_chart_working_copy(filtered, numeric, categorical)
+    if fill_missing_for_charts
+    else (filtered.copy(), set())
+)
+
 charts = charts_for(
-    filtered,
+    chart_data,
     numeric,
     dates,
     categorical,
@@ -1937,7 +2247,7 @@ charts = charts_for(
 custom_view = None
 if show_focused_chart and chart_type:
     custom_view = chart_for(
-        filtered,
+        chart_data,
         numeric,
         dates,
         categorical,
@@ -1949,41 +2259,165 @@ if show_focused_chart and chart_type:
 
 dashboard_columns = st.columns(2)
 
-for index, (chart, explanation) in enumerate(charts):
-    chart.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(21,29,63,.3)",
-        font=dict(color="#f0f9ff"),
-        legend=dict(font=dict(color="#f0f9ff")),
-        margin=dict(l=20, r=20, t=55, b=20),
-    )
-
+for index, (chart, explanation, relevant_columns) in enumerate(charts):
+    apply_chart_layout(chart)
     column = dashboard_columns[index % 2]
     with column:
         st.plotly_chart(
             chart,
-            use_container_width=True,
+            width="stretch",
+            config=PLOTLY_CHART_CONFIG,
+            key=f"adaptive-chart-{index}",
         )
         st.caption(explanation)
+        if fill_missing_for_charts and chart_uses_interpolation(
+            relevant_columns,
+            chart_filled_columns,
+        ):
+            st.caption("ℹ️ Interpolated data used for this chart.")
 
 
 if custom_view:
     st.subheader("Focused custom chart")
-    focused_chart, focused_note = custom_view
-    focused_chart.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(21,29,63,.3)",
-        font=dict(color="#f0f9ff"),
-        legend=dict(font=dict(color="#f0f9ff")),
-        margin=dict(l=20, r=20, t=55, b=20),
-    )
+    focused_chart, focused_note, focused_columns = custom_view
+    apply_chart_layout(focused_chart)
     st.plotly_chart(
         focused_chart,
-        use_container_width=True,
+        width="stretch",
+        config=PLOTLY_CHART_CONFIG,
+        key="focused-custom-chart",
     )
     st.caption(f"Focused chart: {focused_note}")
+    if fill_missing_for_charts and chart_uses_interpolation(
+        focused_columns,
+        chart_filled_columns,
+    ):
+        st.caption("ℹ️ Interpolated data used for this chart.")
+
+
+st.subheader("Build your own chart")
+st.caption(
+    "Force the axes for an additional custom chart without changing the adaptive four-chart overview."
+)
+
+builder_chart_type = st.selectbox(
+    "Chart type",
+    ["Bar", "Line", "Scatter", "Box", "Histogram", "Area"],
+    key="builder_chart_type",
+)
+
+if builder_chart_type == "Histogram":
+    builder_x_options = numeric
+elif builder_chart_type == "Scatter":
+    builder_x_options = numeric
+elif builder_chart_type in {"Line", "Area"}:
+    builder_x_options = dates + categorical
+elif builder_chart_type == "Box":
+    builder_x_options = categorical + dates
+else:
+    builder_x_options = categorical + dates + text
+
+builder_control_columns = st.columns(4)
+builder_x_column = builder_control_columns[0].selectbox(
+    "X-axis column",
+    builder_x_options if builder_x_options else ["No compatible columns"],
+    key="builder_x_column",
+)
+
+builder_y_column = None
+if builder_chart_type != "Histogram":
+    builder_y_options = numeric
+    builder_y_column = builder_control_columns[1].selectbox(
+        "Y-axis column",
+        builder_y_options if builder_y_options else ["No compatible columns"],
+        key="builder_y_column",
+    )
+
+color_options = [
+    "None",
+    *[
+        column
+        for column in categorical
+        if column not in {builder_x_column, builder_y_column}
+    ],
+]
+facet_options = [
+    "None",
+    *[
+        column
+        for column in categorical + dates
+        if column not in {builder_x_column, builder_y_column}
+    ],
+]
+
+builder_color_column = builder_control_columns[2].selectbox(
+    "Color / group-by (optional)",
+    color_options,
+    key="builder_color_column",
+)
+builder_facet_column = builder_control_columns[3].selectbox(
+    "Facet (optional)",
+    facet_options,
+    key="builder_facet_column",
+)
+
+builder_size_column = None
+if builder_chart_type == "Scatter":
+    size_options = [
+        "None",
+        *[
+            column
+            for column in numeric
+            if column not in {builder_x_column, builder_y_column}
+        ],
+    ]
+    builder_size_column = st.selectbox(
+        "Size (optional)",
+        size_options,
+        key="builder_size_column",
+    )
+
+builder_invalid_selection = (
+    not builder_x_options
+    or builder_x_column == "No compatible columns"
+    or (
+        builder_chart_type != "Histogram"
+        and (not numeric or builder_y_column == "No compatible columns")
+    )
+)
+
+if builder_invalid_selection:
+    st.warning("No compatible column combination is available for this chart type yet.")
+else:
+    builder_chart, builder_note, builder_columns = build_custom_chart(
+        chart_data,
+        numeric,
+        dates,
+        categorical,
+        builder_chart_type,
+        builder_x_column,
+        builder_y_column,
+        None if builder_color_column == "None" else builder_color_column,
+        None if builder_facet_column == "None" else builder_facet_column,
+        None if builder_size_column == "None" else builder_size_column,
+    )
+
+    if builder_chart is None:
+        st.warning(builder_note)
+    else:
+        apply_chart_layout(builder_chart)
+        st.plotly_chart(
+            builder_chart,
+            width="stretch",
+            config=PLOTLY_CHART_CONFIG,
+            key="builder-custom-chart",
+        )
+        st.caption(builder_note)
+        if fill_missing_for_charts and chart_uses_interpolation(
+            builder_columns,
+            chart_filled_columns,
+        ):
+            st.caption("ℹ️ Interpolated data used for this chart.")
 
 
 st.subheader("Assistant recommendations")
