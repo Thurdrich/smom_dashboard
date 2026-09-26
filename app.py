@@ -846,17 +846,8 @@ def recommend_actions(data, numeric, dates, categorical, text):
                     on=key_columns,
                     how="outer",
                 )
-                rating_baseline = (
-                    underway_groups.groupby(rating_column)[
-                        "underway_count"
-                    ]
-                    .quantile(0.5)
-                    .apply(np.ceil)
-                    .astype(int)
-                )
                 safe_check["safe_threshold"] = (
-                    safe_check[rating_column]
-                    .map(rating_baseline)
+                    safe_check["underway_count"]
                     .fillna(0)
                     .astype(int)
                 )
@@ -879,10 +870,9 @@ def recommend_actions(data, numeric, dates, categorical, text):
                             ascending=False,
                         ).iloc[0]
                     else:
-                        selected_group = safe_check.sort_values(
-                            ["deficit", "safe_threshold"],
-                            ascending=[False, True],
-                        ).iloc[0]
+                        selected_group = safe_check.iloc[
+                            safe_check["deficit"].abs().argmin()
+                        ]
                     unit_parts = [
                         f"{column}: {selected_group[column]}"
                         for column in key_columns
@@ -911,7 +901,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                             "ABS-safe shipboard ratings check before underway",
                             (
                                 f"{go_status} readiness check for `{escape_markdown(unit_label)}` "
-                                "against the per-rating underway baseline."
+                                "against the same-unit underway baseline."
                             ),
                             (
                                 "Use this baseline as the minimum shipboard rating threshold from any port "
