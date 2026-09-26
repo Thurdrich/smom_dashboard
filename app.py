@@ -362,6 +362,7 @@ def metric_direction(column_name):
 def maritime_context(data):
     names = " ".join(map(str, data.columns)).lower()
     return {
+        "billet": "billet" in names,
         "crew": any(
             word in names
             for word in (
@@ -412,30 +413,43 @@ def domain_terms(data):
     context = maritime_context(data)
     if context["crew"] and context["travel"]:
         return {
-            "records": "crew and travel records",
+            "total_unit": "records",
+            "segment_unit": "records",
             "segment": "crew/travel segment",
             "focus": "manning and TDY/travel readiness",
         }
     if context["crew"]:
         return {
-            "records": "billets",
+            "total_unit": (
+                "billets"
+                if context["billet"]
+                else "crew records"
+            ),
+            "segment_unit": (
+                "billets"
+                if context["billet"]
+                else "crew records"
+            ),
             "segment": "crew segment",
             "focus": "manning readiness",
         }
     if context["travel"]:
         return {
-            "records": "travel requests",
+            "total_unit": "travel requests",
+            "segment_unit": "travel requests",
             "segment": "travel segment",
             "focus": "TDY/travel execution",
         }
     if context["port"]:
         return {
-            "records": "port movements",
+            "total_unit": "port movements",
+            "segment_unit": "port movements",
             "segment": "port segment",
             "focus": "port readiness",
         }
     return {
-        "records": "records",
+        "total_unit": "rows",
+        "segment_unit": "records",
         "segment": "segment",
         "focus": "operations",
     }
@@ -573,7 +587,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
     row_count = len(data)
     quality_fields = []
     terms = domain_terms(data)
-    maritime_mode = terms["records"] != "records"
+    maritime_mode = terms["focus"] != "operations"
 
     category = best_category(data, categorical)
     if category and category in data:
@@ -610,7 +624,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                         ),
                         confidence,
                         evidence=(
-                            f"{top_count:,} of {row_count:,} {terms['records']} fall into `{safe_top_label}`."
+                            f"{top_count:,} of {row_count:,} {terms['segment_unit']} fall into `{safe_top_label}`."
                         ),
                         priority=signal_strength,
                     )
@@ -1325,7 +1339,7 @@ def insights(data, numeric, dates, categorical, text):
         if len(counts):
             findings.append(
                 f"**{counts.index[0]}** is the largest `{category}` {terms['segment']} "
-                f"at **{counts.iloc[0] / len(data):.1%}** of {terms['records']}."
+                f"at **{counts.iloc[0] / len(data):.1%}** of {terms['total_unit']}."
             )
 
     if dates:
@@ -1423,7 +1437,7 @@ def local_answer(question, data, numeric, dates, categorical, text):
             "The current filters return no rows, so there is nothing reliable to "
             + (
                 "summarize for manning, travel, or readiness yet."
-                if terms["records"] != "records"
+                if terms["focus"] != "operations"
                 else "summarize or recommend yet."
             )
         )
@@ -1457,13 +1471,31 @@ def local_answer(question, data, numeric, dates, categorical, text):
             )
         )
 
-    if any(
-        phrase in q
-        for phrase in (
-            "manning gap",
-            "travel backlog",
-            "tdy backlog",
-            "port readiness",
+    if (
+        any(
+            keyword in q
+            for keyword in (
+                "manning",
+                "crew",
+                "billet",
+                "travel",
+                "tdy",
+                "port",
+                "deployment",
+                "underway",
+                "readiness",
+            )
+        )
+        and any(
+            signal in q
+            for signal in (
+                "gap",
+                "backlog",
+                "delay",
+                "risk",
+                "trend",
+                "priority",
+            )
         )
     ):
         return format_recommendations(
@@ -1487,7 +1519,7 @@ def local_answer(question, data, numeric, dates, categorical, text):
 
     if "how many" in q or "rows" in q or "records" in q:
         return (
-            f"The current filtered dataset contains {len(data):,} {terms['records']} "
+            f"The current filtered dataset contains {len(data):,} {terms['total_unit']} "
             f"across {len(data.columns):,} fields."
         )
 
@@ -1506,7 +1538,7 @@ def local_answer(question, data, numeric, dates, categorical, text):
 
         return (
             f"The largest {category} {terms['segment']} is {counts.index[0]} with "
-            f"{counts.iloc[0]:,} {terms['records']} "
+            f"{counts.iloc[0]:,} {terms['segment_unit']} "
             f"({counts.iloc[0] / len(data):.1%})."
         )
 
@@ -1526,7 +1558,7 @@ def local_answer(question, data, numeric, dates, categorical, text):
     return (
         (
             "I can answer questions about counts, missingness, date coverage, largest segments, recommendation priorities, and chart choices for this manpower/travel readiness dataset."
-            if terms["records"] != "records"
+            if terms["focus"] != "operations"
             else "I can answer questions about row counts, missingness, detected dates, categories, numeric summaries, and chart choices using only this dataset."
         )
     )
