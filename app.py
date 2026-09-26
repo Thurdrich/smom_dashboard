@@ -332,7 +332,7 @@ def metric_direction(column_name):
             "service level",
         )
     ):
-        return "lower_is_worse"
+        return "higher_is_better"
 
     return "unknown"
 
@@ -684,7 +684,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                         direction == "higher_is_worse"
                         and delta > 0
                     ) or (
-                        direction == "lower_is_worse"
+                        direction == "higher_is_better"
                         and delta < 0
                     ):
                         title = "Recent trend shows deterioration"
@@ -697,7 +697,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                         direction == "higher_is_worse"
                         and delta < 0
                     ) or (
-                        direction == "lower_is_worse"
+                        direction == "higher_is_better"
                         and delta > 0
                     ):
                         title = "Recent trend is improving"
@@ -756,7 +756,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
             worst_rate = quality_missingness.iloc[0]
             confidence = confidence_label(
                 row_count,
-                0,
+                float(quality_missingness.mean()),
                 worst_rate,
             )
             recommendations.append(
