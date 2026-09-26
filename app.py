@@ -850,7 +850,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                     underway_groups.groupby(rating_column)[
                         "underway_count"
                     ]
-                    .quantile(0.25)
+                    .quantile(0.5)
                     .apply(np.ceil)
                     .astype(int)
                 )
@@ -893,8 +893,11 @@ def recommend_actions(data, numeric, dates, categorical, text):
                             1.0,
                             max(
                                 0.15,
-                                abs(float(worst["deficit"]))
-                                / max(float(worst["safe_threshold"]), 1.0),
+                                abs(float(selected_group["deficit"]))
+                                / max(
+                                    float(selected_group["safe_threshold"]),
+                                    1.0,
+                                ),
                             ),
                         )
                     )
