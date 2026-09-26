@@ -406,7 +406,12 @@ def chart_for(
                     .dropna()
                     .reset_index()
                 )
-                chart_frame = trend if len(trend) >= 3 else frame
+                daily = (
+                    frame.groupby("Date", as_index=False)
+                    .mean(numeric_only=True)
+                    .sort_values("Date")
+                )
+                chart_frame = trend if len(trend) >= 3 else daily
 
                 return (
                     px.line(
@@ -482,7 +487,7 @@ def chart_for(
             f"{chart_type} view was unavailable for this schema."
         )
 
-    except Exception:
+    except (ValueError, TypeError, KeyError):
         return fallback_count(
             f"{chart_type} view could not be built from the current fields."
         )
@@ -892,8 +897,9 @@ charts = charts_for(
     categorical,
 )
 
+custom_view = None
 if show_focused_chart and chart_type:
-    custom_chart, custom_note = chart_for(
+    custom_view = chart_for(
         filtered,
         numeric,
         dates,
@@ -902,7 +908,6 @@ if show_focused_chart and chart_type:
         x_column,
         y_column,
     )
-    charts.append((custom_chart, f"Focused chart: {custom_note}"))
 
 
 dashboard_columns = st.columns(2)
@@ -924,6 +929,24 @@ for index, (chart, explanation) in enumerate(charts):
             use_container_width=True,
         )
         st.caption(explanation)
+
+
+if custom_view:
+    st.subheader("Focused custom chart")
+    focused_chart, focused_note = custom_view
+    focused_chart.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(21,29,63,.3)",
+        font=dict(color="#f0f9ff"),
+        legend=dict(font=dict(color="#f0f9ff")),
+        margin=dict(l=20, r=20, t=55, b=20),
+    )
+    st.plotly_chart(
+        focused_chart,
+        use_container_width=True,
+    )
+    st.caption(f"Focused chart: {focused_note}")
 
 
 with st.expander("Attention queue and prepared data"):
