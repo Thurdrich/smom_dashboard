@@ -1443,6 +1443,13 @@ missing_rate = (
     if not filtered.empty
     else 0
 )
+recommendations = recommend_actions(
+    filtered,
+    numeric,
+    dates,
+    categorical,
+    text,
+)
 
 metrics = st.columns(4)
 
@@ -1469,6 +1476,34 @@ else "Proceed carefully: missingness may distort conclusions."}
 """,
     unsafe_allow_html=True,
 )
+
+
+st.subheader("Recommended actions")
+recommendation_columns = st.columns(2)
+
+for index, recommendation in enumerate(recommendations[:4]):
+    evidence = (
+        f"<br><em>{html.escape(recommendation['evidence'])}</em>"
+        if recommendation.get("evidence")
+        else ""
+    )
+    recommendation_html = f"""
+    <div class="recommendation-card">
+        <strong>{html.escape(recommendation["title"])}</strong><br>
+        {html.escape(recommendation["insight"])}<br><br>
+        <strong>Suggested action:</strong> {html.escape(recommendation["action"])}
+        {evidence}<br>
+        <span class="recommendation-confidence">
+            Confidence: {html.escape(recommendation["confidence"])}
+        </span>
+    </div>
+    """
+
+    with recommendation_columns[index % 2]:
+        st.markdown(
+            recommendation_html,
+            unsafe_allow_html=True,
+        )
 
 
 with st.expander("Ask the local data assistant", expanded=True):
