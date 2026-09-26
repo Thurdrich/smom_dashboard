@@ -818,11 +818,19 @@ numeric, dates, categorical, text = profile(analysis_data)
 with st.sidebar:
     selected = {}
 
-    for column in [
-        value
-        for value in categorical
-        if 1 < analysis_data[value].nunique(dropna=True) <= 20
-    ][:4]:
+    filterable_categories = []
+    for value in categorical:
+        try:
+            unique_count = clean_label(analysis_data[value]).nunique(
+                dropna=True
+            )
+        except Exception:
+            continue
+
+        if 1 < unique_count <= 20:
+            filterable_categories.append(value)
+
+    for column in filterable_categories[:4]:
 
         values = sorted(
             clean_label(analysis_data[column]).unique().tolist()
