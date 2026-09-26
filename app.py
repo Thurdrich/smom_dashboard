@@ -470,6 +470,10 @@ def chart_for(
 
     if chart_type == "Quality":
         missing = data.isna().mean().sort_values().tail(12).sort_values()
+        if not len(missing):
+            return fallback_count(
+                "Quality view was unavailable for this schema."
+            )
         return (
             px.bar(
                 x=missing.values,
