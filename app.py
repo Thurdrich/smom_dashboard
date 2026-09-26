@@ -453,12 +453,16 @@ def recommendation_record(
 def recommend_actions(data, numeric, dates, categorical, text):
     if data.empty:
         return [
-            recommendation_record(
-                "Need more filtered records",
-                "The current filters leave no rows to evaluate.",
-                "Broaden the active filters or upload additional records before acting on this view.",
-                "Low",
-            )
+            {
+                "title": "Need more filtered records",
+                "insight": "The current filters leave no rows to evaluate.",
+                "action": (
+                    "Broaden the active filters or upload additional records "
+                    "before acting on this view."
+                ),
+                "confidence": "Low",
+                "evidence": "",
+            }
         ]
 
     recommendations = []
