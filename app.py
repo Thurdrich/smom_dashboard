@@ -1,3 +1,4 @@
+import html
 from io import BytesIO
 from pathlib import Path
 import re
@@ -31,6 +32,8 @@ label { color:var(--text) !important; }
 [data-baseweb="select"] input,[data-baseweb="select"] span,[data-baseweb="input"] input { color:var(--text) !important; }
 [data-testid="stExpander"] { border:1px solid rgba(168,85,247,.5); background:rgba(21,29,63,.55); }
 h1,h2,h3 { color:#fff !important; text-shadow:0 0 10px rgba(168,85,247,.3); }
+.recommendation-card { background:linear-gradient(145deg,rgba(6,182,212,.1),rgba(168,85,247,.1)); border:1px solid rgba(6,182,212,.45); border-left:4px solid var(--cyan); border-radius:12px; padding:14px 16px; margin-bottom:12px; color:var(--text); min-height:150px; }
+.recommendation-confidence { display:inline-block; margin-top:8px; padding:2px 8px; border-radius:999px; background:rgba(168,85,247,.2); color:#e9d5ff; font-size:.8rem; font-weight:700; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -292,6 +295,520 @@ def best_category(data, categorical):
         if usable
         else (categorical[0] if categorical else None)
     )
+
+
+def metric_direction(column_name):
+    name = str(column_name).lower().replace("_", " ")
+
+    if any(
+        word in name
+        for word in (
+            "workload",
+            "backlog",
+            "delay",
+            "risk",
+            "incident",
+            "error",
+            "queue",
+            "gap",
+            "aging",
+            "overtime",
+            "critical",
+            "overdue",
+        )
+    ):
+        return "higher_is_worse"
+
+    if any(
+        word in name
+        for word in (
+            "readiness",
+            "staffing",
+            "coverage",
+            "availability",
+            "fill",
+            "compliance",
+            "capacity",
+            "service level",
+        )
+    ):
+        return "lower_is_worse"
+
+    return "unknown"
+
+
+def best_matching_column(data, candidates, include_words, exclude_words=()):
+    matches = []
+
+    for column in candidates:
+        name = str(column).lower()
+
+        if any(word in name for word in exclude_words):
+            continue
+
+        score = sum(word in name for word in include_words)
+        if score:
+            matches.append(
+                (
+                    score,
+                    data[column].notna().mean(),
+                    -data[column].isna().mean(),
+                    column,
+                )
+            )
+
+    return max(matches)[-1] if matches else None
+
+
+def best_trend_columns(data, numeric, dates):
+    date_candidates = []
+
+    for column in dates:
+        parsed = parse_dates(data[column])
+        date_candidates.append(
+            (
+                parsed.notna().mean(),
+                parsed.nunique(dropna=True),
+                column,
+            )
+        )
+
+    metric_candidates = []
+
+    for column in numeric:
+        numeric_values = pd.to_numeric(
+            data[column],
+            errors="coerce",
+        )
+        metric_candidates.append(
+            (
+                metric_direction(column) != "unknown",
+                numeric_values.notna().mean(),
+                numeric_values.std(skipna=True) > 0,
+                column,
+            )
+        )
+
+    date_column = max(date_candidates)[-1] if date_candidates else None
+    metric_column = (
+        max(metric_candidates)[-1]
+        if metric_candidates
+        else None
+    )
+
+    return date_column, metric_column
+
+
+def confidence_label(sample_size, missingness, signal_strength):
+    if sample_size < 10 or missingness >= .55:
+        return "Low"
+
+    score = 0
+
+    if sample_size >= 120:
+        score += 2
+    elif sample_size >= 40:
+        score += 1
+
+    if missingness <= .1:
+        score += 2
+    elif missingness <= .25:
+        score += 1
+
+    if signal_strength >= .3:
+        score += 2
+    elif signal_strength >= .15:
+        score += 1
+
+    if score >= 5:
+        return "High"
+
+    if score >= 3:
+        return "Medium"
+
+    return "Low"
+
+
+def recommendation_record(
+    title,
+    insight,
+    action,
+    confidence,
+    evidence="",
+    priority=0,
+):
+    if confidence == "Low":
+        action = f"Treat this as an early signal: {action}"
+
+    return {
+        "title": title,
+        "insight": insight,
+        "action": action,
+        "confidence": confidence,
+        "evidence": evidence,
+        "_priority": priority,
+    }
+
+
+def recommend_actions(data, numeric, dates, categorical, text):
+    if data.empty:
+        return [
+            recommendation_record(
+                "Need more filtered records",
+                "The current filters leave no rows to evaluate.",
+                "Broaden the active filters or upload additional records before acting on this view.",
+                "Low",
+            )
+        ]
+
+    recommendations = []
+    row_count = len(data)
+    quality_fields = []
+
+    category = best_category(data, categorical)
+    if category and category in data:
+        quality_fields.append(category)
+        counts = clean_label(data[category]).value_counts()
+
+        if len(counts):
+            top_label = counts.index[0]
+            top_count = int(counts.iloc[0])
+            top_share = top_count / row_count
+
+            if top_share >= .48:
+                missingness = data[category].isna().mean()
+                signal_strength = min(1.0, top_share - .33)
+                confidence = confidence_label(
+                    row_count,
+                    missingness,
+                    signal_strength,
+                )
+                recommendations.append(
+                    recommendation_record(
+                        "Concentration warrants segment planning",
+                        (
+                            f"`{top_label}` accounts for {top_share:.1%} of the current "
+                            f"`{category}` volume, which suggests the workload is concentrated "
+                            "in one segment."
+                        ),
+                        (
+                            "Bias near-term capacity and review effort toward this segment, "
+                            f"then split `{top_label}` by time or other filters to confirm "
+                            "which sub-cohort is driving the concentration."
+                        ),
+                        confidence,
+                        evidence=(
+                            f"{top_count:,} of {row_count:,} rows fall into `{top_label}`."
+                        ),
+                        priority=signal_strength,
+                    )
+                )
+
+    numeric_candidates = [
+        column
+        for column in numeric
+        if column in data.columns
+    ]
+    workload_column = best_matching_column(
+        data,
+        numeric_candidates,
+        ("workload", "demand", "backlog", "volume", "queue"),
+    )
+    staffing_column = best_matching_column(
+        data,
+        [
+            column
+            for column in numeric_candidates
+            if column != workload_column
+        ],
+        ("staffing", "staff", "manning", "crew", "capacity", "fte"),
+    )
+    readiness_column = best_matching_column(
+        data,
+        [
+            column
+            for column in numeric_candidates
+            if column not in {workload_column, staffing_column}
+        ],
+        ("readiness", "availability", "coverage", "fill"),
+    )
+
+    quality_fields.extend(
+        [
+            column
+            for column in (
+                workload_column,
+                staffing_column,
+                readiness_column,
+            )
+            if column
+        ]
+    )
+
+    if workload_column and staffing_column:
+        workload_values = pd.to_numeric(
+            data[workload_column],
+            errors="coerce",
+        )
+        staffing_values = pd.to_numeric(
+            data[staffing_column],
+            errors="coerce",
+        )
+        readiness_values = (
+            pd.to_numeric(
+                data[readiness_column],
+                errors="coerce",
+            )
+            if readiness_column
+            else pd.Series(np.nan, index=data.index)
+        )
+
+        operations = pd.DataFrame(
+            {
+                "workload": workload_values,
+                "staffing": staffing_values,
+                "readiness": readiness_values,
+            }
+        ).dropna(subset=["workload", "staffing"])
+
+        if len(operations) >= 10:
+            operations["gap"] = (
+                operations["workload"] - operations["staffing"]
+            )
+            mean_gap = float(operations["gap"].mean())
+            workload_mean = float(
+                operations["workload"].mean()
+                if operations["workload"].notna().any()
+                else 0
+            )
+            threshold = max(2.0, workload_mean * .08)
+            readiness_mean = (
+                float(operations["readiness"].mean())
+                if operations["readiness"].notna().any()
+                else np.nan
+            )
+            readiness_risk = (
+                max(0.0, (85 - readiness_mean) / 20)
+                if not pd.isna(readiness_mean)
+                else 0.0
+            )
+            signal_strength = max(
+                mean_gap / max(abs(workload_mean), 1.0),
+                readiness_risk,
+            )
+            missingness = 1 - (
+                len(operations) / max(len(data), 1)
+            )
+
+            if mean_gap >= threshold or readiness_risk >= .15:
+                readiness_clause = (
+                    f" and `{readiness_column}` averages {readiness_mean:.1f}"
+                    if readiness_column and not pd.isna(readiness_mean)
+                    else ""
+                )
+                confidence = confidence_label(
+                    len(operations),
+                    missingness,
+                    signal_strength,
+                )
+                recommendations.append(
+                    recommendation_record(
+                        "Operational gap needs coverage planning",
+                        (
+                            f"Average `{workload_column}` exceeds `{staffing_column}` by "
+                            f"{mean_gap:.1f}{readiness_clause}, indicating the operating "
+                            "buffer may be under pressure."
+                        ),
+                        (
+                            "Prepare surge support or reassignment for the highest-load "
+                            "segments and set a simple escalation rule when the workload-to-"
+                            "staffing gap stays above the recent norm."
+                        ),
+                        confidence,
+                        evidence=(
+                            f"Evaluated {len(operations):,} rows with both workload and staffing values."
+                        ),
+                        priority=signal_strength,
+                    )
+                )
+
+    date_column, metric_column = best_trend_columns(
+        data,
+        numeric,
+        dates,
+    )
+    quality_fields.extend(
+        [
+            column
+            for column in (date_column, metric_column)
+            if column
+        ]
+    )
+
+    if date_column and metric_column:
+        trend = pd.DataFrame(
+            {
+                "Date": parse_dates(data[date_column]),
+                "Value": pd.to_numeric(
+                    data[metric_column],
+                    errors="coerce",
+                ),
+            }
+        ).dropna().sort_values("Date")
+
+        if len(trend) >= 10:
+            trend = (
+                trend.groupby("Date", as_index=False)
+                .mean(numeric_only=True)
+                .sort_values("Date")
+            )
+            window = max(4, min(10, len(trend) // 3))
+
+            if len(trend) >= window * 2:
+                baseline = trend.head(window)["Value"].mean()
+                recent = trend.tail(window)["Value"].mean()
+                scale = max(abs(baseline), 1.0)
+                delta = (recent - baseline) / scale
+                direction = metric_direction(metric_column)
+                signal_strength = abs(delta)
+                missingness = 1 - (
+                    len(trend) / max(len(data), 1)
+                )
+
+                if signal_strength >= .12:
+                    if (
+                        direction == "higher_is_worse"
+                        and delta > 0
+                    ) or (
+                        direction == "lower_is_worse"
+                        and delta < 0
+                    ):
+                        title = "Recent trend shows deterioration"
+                        action = (
+                            "Trigger a short-horizon mitigation review, check what changed "
+                            "in the most recent period, and monitor this metric until it "
+                            "moves back toward baseline."
+                        )
+                    elif (
+                        direction == "higher_is_worse"
+                        and delta < 0
+                    ) or (
+                        direction == "lower_is_worse"
+                        and delta > 0
+                    ):
+                        title = "Recent trend is improving"
+                        action = (
+                            "Sustain the current operating pattern, capture what changed in "
+                            "the stronger period, and standardize it where similar segments "
+                            "show the same conditions."
+                        )
+                    else:
+                        title = "Recent trend moved materially"
+                        action = (
+                            "Use this as a monitoring signal, but verify whether higher or "
+                            "lower values are desirable for this metric before changing "
+                            "operations."
+                        )
+
+                    confidence = confidence_label(
+                        len(trend),
+                        missingness,
+                        signal_strength,
+                    )
+                    recommendations.append(
+                        recommendation_record(
+                            title,
+                            (
+                                f"`{metric_column}` moved from a baseline average of "
+                                f"{baseline:.1f} to a recent average of {recent:.1f} across "
+                                f"`{date_column}`."
+                            ),
+                            action,
+                            confidence,
+                            evidence=(
+                                f"Compared the earliest {window} periods with the latest {window} periods."
+                            ),
+                            priority=signal_strength,
+                        )
+                    )
+
+    quality_fields = [
+        column
+        for column in dict.fromkeys(quality_fields)
+        if column in data.columns
+    ]
+    if quality_fields:
+        quality_missingness = (
+            data[quality_fields].isna().mean().sort_values(ascending=False)
+        )
+        if (
+            len(quality_missingness)
+            and (
+                quality_missingness.iloc[0] >= .3
+                or quality_missingness.mean() >= .2
+            )
+        ):
+            worst_field = quality_missingness.index[0]
+            worst_rate = quality_missingness.iloc[0]
+            confidence = confidence_label(
+                row_count,
+                0,
+                worst_rate,
+            )
+            recommendations.append(
+                recommendation_record(
+                    "Data quality should be tightened first",
+                    (
+                        f"`{worst_field}` is missing in {worst_rate:.1%} of the key fields "
+                        "used for recommendations, so the current guidance should be treated "
+                        "as directional rather than definitive."
+                    ),
+                    (
+                        "Improve source capture or backfill the highest-missing operational "
+                        "fields before making major staffing, readiness, or segment-level decisions."
+                    ),
+                    confidence,
+                    evidence=(
+                        f"Average missingness across key recommendation fields is {quality_missingness.mean():.1%}."
+                    ),
+                    priority=worst_rate,
+                )
+            )
+
+    if not recommendations:
+        fallback_confidence = confidence_label(
+            row_count,
+            float(data.isna().mean().mean()),
+            .08,
+        )
+        recommendations.append(
+            recommendation_record(
+                "No strong recommendation signal yet",
+                "This filtered slice does not show a stable concentration, operating gap, or directional trend large enough to justify a stronger action call.",
+                "Use the chart and filter controls to inspect smaller cohorts or narrower time windows for localized issues before changing operations.",
+                fallback_confidence,
+                priority=.08,
+            )
+        )
+
+    return [
+        {
+            key: value
+            for key, value in recommendation.items()
+            if not key.startswith("_")
+        }
+        for recommendation in sorted(
+            recommendations,
+            key=lambda item: (
+                {"High": 2, "Medium": 1, "Low": 0}.get(
+                    item["confidence"],
+                    0,
+                ),
+                item.get("_priority", 0),
+            ),
+            reverse=True,
+        )[:4]
+    ]
 
 
 def chart_for(
@@ -665,6 +1182,26 @@ def insights(data, numeric, dates, categorical, text):
     )
 
 
+def format_recommendations(recommendations, limit=3):
+    lines = []
+
+    for recommendation in recommendations[:limit]:
+        evidence = (
+            f" Evidence: {recommendation['evidence']}"
+            if recommendation.get("evidence")
+            else ""
+        )
+        lines.append(
+            "- "
+            f"**{recommendation['title']}** "
+            f"({recommendation['confidence']}) — "
+            f"{recommendation['insight']} "
+            f"**Action:** {recommendation['action']}{evidence}"
+        )
+
+    return "\n".join(lines)
+
+
 def sensitive_columns(frame):
     return [
         column
@@ -693,9 +1230,35 @@ def mask_sensitive(frame, columns=None):
     return result
 
 
-def local_answer(question, data, numeric, dates, categorical):
+def local_answer(question, data, numeric, dates, categorical, text):
     q = question.lower().strip()
     category = best_category(data, categorical)
+    recommendation_intents = (
+        "recommend",
+        "action",
+        "next step",
+        "what should we do",
+        "what do we do",
+        "priority",
+        "plan",
+    )
+
+    if data.empty:
+        return (
+            "The current filters return no rows, so there is nothing reliable to "
+            "summarize or recommend yet."
+        )
+
+    if any(intent in q for intent in recommendation_intents):
+        return format_recommendations(
+            recommend_actions(
+                data,
+                numeric,
+                dates,
+                categorical,
+                text,
+            )
+        )
 
     if any(word in q for word in ("chart", "graph", "visual", "plot")):
         if "line" in q or "trend" in q:
@@ -939,6 +1502,7 @@ with st.expander("Ask the local data assistant", expanded=True):
             numeric,
             dates,
             categorical,
+            text,
         )
 
         st.session_state.chat_history.append(
