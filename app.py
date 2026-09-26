@@ -1214,6 +1214,28 @@ def escape_markdown(value):
     )
 
 
+def is_recommendation_request(question):
+    patterns = (
+        r"\brecommend(?:ation|ed)?s?\b",
+        r"\bnext steps?\b",
+        r"\bwhat should we do\b",
+        r"\bwhat do we do\b",
+        r"\bwhat actions?\b",
+        r"\bactions? (?:should|do|to take|next)\b",
+        r"\baction plan\b",
+        r"\bplan of action\b",
+        r"\btop priority\b",
+        r"\bhighest priority\b",
+        r"\bmain priority\b",
+        r"\bwhat(?:'s| is) (?:our |the )?priority\b",
+    )
+
+    return any(
+        re.search(pattern, question)
+        for pattern in patterns
+    )
+
+
 def format_recommendations(recommendations, limit=3):
     lines = []
 
@@ -1265,15 +1287,6 @@ def mask_sensitive(frame, columns=None):
 def local_answer(question, data, numeric, dates, categorical, text):
     q = question.lower().strip()
     category = best_category(data, categorical)
-    recommendation_intents = (
-        "recommend",
-        "action",
-        "next step",
-        "what should we do",
-        "what do we do",
-        "priority",
-        "plan",
-    )
 
     if data.empty:
         return (
@@ -1299,7 +1312,7 @@ def local_answer(question, data, numeric, dates, categorical, text):
             "a custom chart type and fields."
         )
 
-    if any(intent in q for intent in recommendation_intents):
+    if is_recommendation_request(q):
         return format_recommendations(
             cached_recommend_actions(
                 data,
