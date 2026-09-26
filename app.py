@@ -1927,23 +1927,33 @@ with st.expander("Signal workspace and prepared data"):
             hide_index=True,
         )
 
-    show_raw_prepared = st.checkbox(
-        "Show raw prepared sample (first 75 rows)",
+    allow_raw_data = st.checkbox(
+        "I understand the prepared view is unmasked and may contain identifiers",
         value=False,
     )
-    if show_raw_prepared:
-        st.dataframe(
-            prepared.head(75),
-            use_container_width=True,
-            hide_index=True,
-        )
 
-    st.download_button(
-        "Download prepared view",
-        prepared.to_csv(index=False).encode("utf-8"),
-        "smom_predictive_prepared_data.csv",
-        "text/csv",
-    )
+    if allow_raw_data:
+        show_raw_prepared = st.checkbox(
+            "Show raw prepared sample (first 75 rows)",
+            value=False,
+        )
+        if show_raw_prepared:
+            st.dataframe(
+                prepared.head(75),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.download_button(
+            "Download prepared view",
+            prepared.to_csv(index=False).encode("utf-8"),
+            "smom_predictive_prepared_data.csv",
+            "text/csv",
+        )
+    else:
+        st.info(
+            "Enable the acknowledgement checkbox to preview or download the unmasked prepared data."
+        )
 
 
 st.caption(
