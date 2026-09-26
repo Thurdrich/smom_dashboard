@@ -1229,7 +1229,12 @@ def chart_for(
 
     if chart_type == "Signal":
         profile = prediction_readiness_components(data, numeric, dates, categorical)
-        field_signal = profile["field_signal"].head(12).sort_values()
+        field_signal = (
+            profile["field_signal"]
+            .sort_values(ascending=False)
+            .head(12)
+            .sort_values()
+        )
         if not len(field_signal):
             return fallback_count(
                 "Signal view was unavailable for this schema."
@@ -1882,6 +1887,10 @@ if custom_view:
 
 with st.expander("Signal workspace and prepared data"):
     prepared = filtered
+    st.warning(
+        "Prepared data preview and downloads include raw uploaded values "
+        "(unmasked). Confirm your dataset is safe to display locally before sharing screens or files."
+    )
     snapshot_metrics = st.columns(3)
     snapshot_metrics[0].metric("Prepared rows", f"{len(prepared):,}")
     snapshot_metrics[1].metric("Prepared fields", f"{len(prepared.columns):,}")
@@ -1898,6 +1907,20 @@ with st.expander("Signal workspace and prepared data"):
                 {
                     "Field": field_signal_summary.index,
                     "Signal score": field_signal_summary.values,
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    weak_signal_summary = readiness_profile["field_signal"].sort_values().head(10)
+    if len(weak_signal_summary):
+        st.caption("Weakest feature signals in prepared data")
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "Field": weak_signal_summary.index,
+                    "Signal score": weak_signal_summary.values,
                 }
             ),
             use_container_width=True,
