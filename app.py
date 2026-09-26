@@ -497,6 +497,8 @@ def recommend_actions(data, numeric, dates, categorical, text):
             top_label = counts.index[0]
             top_count = int(counts.iloc[0])
             top_share = top_count / row_count
+            safe_top_label = escape_markdown(top_label)
+            safe_category = escape_markdown(category)
 
             if top_share >= .48:
                 missingness = data[category].isna().mean()
@@ -510,18 +512,18 @@ def recommend_actions(data, numeric, dates, categorical, text):
                     recommendation_record(
                         "Concentration warrants segment planning",
                         (
-                            f"`{top_label}` accounts for {top_share:.1%} of the current "
-                            f"`{category}` volume, which suggests the workload is concentrated "
+                            f"`{safe_top_label}` accounts for {top_share:.1%} of the current "
+                            f"`{safe_category}` volume, which suggests the workload is concentrated "
                             "in one segment."
                         ),
                         (
                             "Bias near-term capacity and review effort toward this segment, "
-                            f"then split `{top_label}` by time or other filters to confirm "
+                            f"then split `{safe_top_label}` by time or other filters to confirm "
                             "which sub-cohort is driving the concentration."
                         ),
                         confidence,
                         evidence=(
-                            f"{top_count:,} of {row_count:,} rows fall into `{top_label}`."
+                            f"{top_count:,} of {row_count:,} rows fall into `{safe_top_label}`."
                         ),
                         priority=signal_strength,
                     )
@@ -624,8 +626,10 @@ def recommend_actions(data, numeric, dates, categorical, text):
             )
 
             if mean_gap >= threshold or readiness_risk >= .15:
+                safe_workload_column = escape_markdown(workload_column)
+                safe_staffing_column = escape_markdown(staffing_column)
                 readiness_clause = (
-                    f" and `{readiness_column}` averages {readiness_mean:.1f}"
+                    f" and `{escape_markdown(readiness_column)}` averages {readiness_mean:.1f}"
                     if readiness_column and not pd.isna(readiness_mean)
                     else ""
                 )
@@ -638,7 +642,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                     recommendation_record(
                         "Operational gap needs coverage planning",
                         (
-                            f"Average `{workload_column}` exceeds `{staffing_column}` by "
+                            f"Average `{safe_workload_column}` exceeds `{safe_staffing_column}` by "
                             f"{mean_gap:.1f}{readiness_clause}, indicating the operating "
                             "buffer may be under pressure."
                         ),
@@ -700,6 +704,8 @@ def recommend_actions(data, numeric, dates, categorical, text):
                 missingness = 1 - trend_coverage
 
                 if signal_strength >= .12:
+                    safe_metric_column = escape_markdown(metric_column)
+                    safe_date_column = escape_markdown(date_column)
                     if (
                         direction == "higher_is_worse"
                         and delta > 0
@@ -743,9 +749,9 @@ def recommend_actions(data, numeric, dates, categorical, text):
                         recommendation_record(
                             title,
                             (
-                                f"`{metric_column}` moved from a baseline average of "
+                                f"`{safe_metric_column}` moved from a baseline average of "
                                 f"{baseline:.1f} to a recent average of {recent:.1f} across "
-                                f"`{date_column}`."
+                                f"`{safe_date_column}`."
                             ),
                             action,
                             confidence,
@@ -783,7 +789,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                 recommendation_record(
                     "Data quality should be tightened first",
                     (
-                        f"`{worst_field}` is missing in {worst_rate:.1%} of the key fields "
+                        f"`{escape_markdown(worst_field)}` is missing in {worst_rate:.1%} of the key fields "
                         "used for recommendations, so the current guidance should be treated "
                         "as directional rather than definitive."
                     ),
@@ -1242,16 +1248,16 @@ def format_recommendations(recommendations, limit=3):
 
     for recommendation in recommendations[:limit]:
         evidence = (
-            f" Evidence: {escape_markdown(recommendation['evidence'])}"
+            f" Evidence: {recommendation['evidence']}"
             if recommendation.get("evidence")
             else ""
         )
         lines.append(
             "- "
-            f"**{escape_markdown(recommendation['title'])}** "
-            f"({escape_markdown(recommendation['confidence'])}) — "
-            f"{escape_markdown(recommendation['insight'])} "
-            f"**Action:** {escape_markdown(recommendation['action'])}{evidence}"
+            f"**{recommendation['title']}** "
+            f"({recommendation['confidence']}) — "
+            f"{recommendation['insight']} "
+            f"**Action:** {recommendation['action']}{evidence}"
         )
 
     return "\n".join(lines)
