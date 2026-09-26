@@ -1421,7 +1421,11 @@ def local_answer(question, data, numeric, dates, categorical, text):
     if data.empty:
         return (
             "The current filters return no rows, so there is nothing reliable to "
-            "summarize for manning, travel, or readiness yet."
+            + (
+                "summarize for manning, travel, or readiness yet."
+                if terms["records"] != "records"
+                else "summarize or recommend yet."
+            )
         )
 
     if any(word in q for word in ("chart", "graph", "visual", "plot")):
@@ -1443,6 +1447,25 @@ def local_answer(question, data, numeric, dates, categorical, text):
         )
 
     if is_recommendation_request(q):
+        return format_recommendations(
+            cached_recommend_actions(
+                data,
+                tuple(numeric),
+                tuple(dates),
+                tuple(categorical),
+                tuple(text),
+            )
+        )
+
+    if any(
+        phrase in q
+        for phrase in (
+            "manning gap",
+            "travel backlog",
+            "tdy backlog",
+            "port readiness",
+        )
+    ):
         return format_recommendations(
             cached_recommend_actions(
                 data,
@@ -1502,7 +1525,7 @@ def local_answer(question, data, numeric, dates, categorical, text):
 
     return (
         (
-            "I can answer questions about manning gaps, TDY/travel backlog, port readiness trends, missingness, and chart choices using only this dataset."
+            "I can answer questions about counts, missingness, date coverage, largest segments, recommendation priorities, and chart choices for this manpower/travel readiness dataset."
             if terms["records"] != "records"
             else "I can answer questions about row counts, missingness, detected dates, categories, numeric summaries, and chart choices using only this dataset."
         )
