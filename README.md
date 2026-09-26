@@ -1,6 +1,6 @@
 # SMOM Manpower & Travel Readiness Dashboard
 
-SMOM Dashboard is a Streamlit **Manpower & Travel Readiness Studio** for maritime operations. Upload one or more manpower/travel datasets and the app profiles them, highlights readiness signals, and selects four adaptive charts to reveal trends, concentrations, relationships, and outliers.
+SMOM Dashboard is a Streamlit **Manpower & Travel Readiness Studio** for maritime operations. Upload one or more manpower/travel datasets and the app profiles them, highlights readiness signals, and renders every insight chart type the schema supports to reveal trends, concentrations, relationships, and outliers.
 
 ## Supported uploads
 
@@ -21,4 +21,4 @@ The Streamlit app entrypoint is `app.py`. Streamlit Cloud can deploy the `main` 
 
 ## How the analysis works
 
-The dashboard detects numeric, categorical, and date-like fields without requiring a particular schema. It then generates four views from the available signals: a trend or distribution, a grouped comparison or relationship, a correlation heatmap or composition view, and a time/category mix or outlier view. The strategic note is exploratory guidance—not a substitute for validating the source data or operational context.
+The dashboard detects numeric, categorical, and date-like fields without requiring a particular schema. It then renders all available insight views from the detected signals (for example bar, line, scatter, histogram, and quality views when supported). The strategic note is exploratory guidance—not a substitute for validating the source data or operational context.

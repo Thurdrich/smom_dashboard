@@ -616,6 +616,296 @@ def recommend_actions(data, numeric, dates, categorical, text):
                     )
                 )
 
+    category_like = [
+        column
+        for column in (
+            list(categorical) + list(text)
+        )
+        if column in data.columns and column != "Source file"
+    ]
+    rating_column = best_matching_column(
+        data,
+        category_like,
+        ("rating", "rate", "rank", "nec"),
+    )
+    traffic_column = best_matching_column(
+        data,
+        category_like,
+        (
+            "traffic",
+            "movement",
+            "in/out",
+            "status",
+            "underway",
+            "depart",
+            "going",
+            "leaving",
+        ),
+    )
+    port_column = best_matching_column(
+        data,
+        category_like,
+        ("port", "location", "terminal"),
+    )
+    vessel_column = best_matching_column(
+        data,
+        category_like,
+        ("vessel", "ship", "hull", "unit", "command"),
+    )
+    importance_column = best_matching_column(
+        data,
+        [column for column in numeric if column in data.columns],
+        ("importance", "priority", "weight", "critical"),
+    )
+
+    if rating_column and traffic_column:
+        traveler_frame = pd.DataFrame(
+            {
+                "rating": clean_label(data[rating_column]),
+                "traffic_raw": clean_label(data[traffic_column]),
+                "port": (
+                    clean_label(data[port_column])
+                    if port_column
+                    else "All ports"
+                ),
+            }
+        )
+        traveler_frame["traffic_active"] = traveler_frame[
+            "traffic_raw"
+        ].str.contains(
+            r"going|leave|leaving|underway|depart|outbound|sail|transit|move",
+            case=False,
+            regex=True,
+        )
+
+        if importance_column:
+            traveler_frame["importance_value"] = pd.to_numeric(
+                data[importance_column],
+                errors="coerce",
+            )
+        else:
+            traveler_frame["importance_value"] = traveler_frame[
+                "rating"
+            ].str.contains(
+                r"master|chief|capt|mate|engineer|officer",
+                case=False,
+                regex=True,
+            ).astype(float)
+
+        traveler_frame["importance_value"] = traveler_frame[
+            "importance_value"
+        ].fillna(
+            traveler_frame["importance_value"].median()
+            if traveler_frame["importance_value"].notna().any()
+            else 0.5
+        )
+
+        grouped = (
+            traveler_frame.groupby(["rating", "port"], dropna=False)
+            .agg(
+                traffic_count=("traffic_active", "sum"),
+                total_count=("traffic_active", "size"),
+                importance_avg=("importance_value", "mean"),
+            )
+            .reset_index()
+        )
+
+        active_groups = grouped[grouped["traffic_count"] > 0].copy()
+        if len(active_groups):
+            max_traffic = max(
+                float(active_groups["traffic_count"].max()),
+                1.0,
+            )
+            active_groups["traffic_intensity"] = (
+                active_groups["traffic_count"]
+                / active_groups["total_count"].clip(lower=1)
+            )
+            importance_min = float(active_groups["importance_avg"].min())
+            importance_span = float(
+                active_groups["importance_avg"].max()
+                - importance_min
+            )
+            if importance_span > 0:
+                active_groups["importance_score"] = (
+                    active_groups["importance_avg"] - importance_min
+                ) / importance_span
+            else:
+                active_groups["importance_score"] = 0.5
+
+            active_groups["priority_score"] = (
+                (active_groups["traffic_count"] / max_traffic) * 0.55
+                + active_groups["traffic_intensity"] * 0.25
+                + active_groups["importance_score"] * 0.20
+            )
+
+            top_group = active_groups.sort_values(
+                "priority_score",
+                ascending=False,
+            ).iloc[0]
+
+            missingness = (
+                traveler_frame[["rating", "traffic_raw"]]
+                .isna()
+                .mean()
+                .mean()
+            )
+            signal_strength = float(
+                min(1.0, top_group["priority_score"])
+            )
+            confidence = confidence_label(
+                len(traveler_frame),
+                float(missingness),
+                signal_strength,
+            )
+            recommendations.append(
+                recommendation_record(
+                    "Traveler group to prioritize first",
+                    (
+                        f"`{escape_markdown(str(top_group['rating']))}` at "
+                        f"`{escape_markdown(str(top_group['port']))}` carries the strongest "
+                        "traffic-weighted priority signal."
+                    ),
+                    (
+                        "Prioritize this traveler group first for routing, clearance, and seat/berth "
+                        "allocation before lower-traffic cohorts."
+                    ),
+                    confidence,
+                    evidence=(
+                        f"Traffic-active records: {int(top_group['traffic_count']):,} of "
+                        f"{int(top_group['total_count']):,}; weighted priority score "
+                        f"{top_group['priority_score']:.2f}."
+                    ),
+                    priority=signal_strength,
+                )
+            )
+
+            underway_columns = [
+                column
+                for column in category_like
+                if any(
+                    key in str(column).lower()
+                    for key in ("status", "in/out", "movement", "traffic")
+                )
+            ]
+            if not underway_columns:
+                underway_columns = [traffic_column]
+
+            underway_mask = pd.Series(False, index=data.index)
+            onboard_mask = pd.Series(False, index=data.index)
+            for column in underway_columns:
+                labels = clean_label(data[column]).str.lower()
+                underway_mask |= labels.str.contains(
+                    r"underway|going|leave|leaving|depart|outbound|sail",
+                    regex=True,
+                )
+                onboard_mask |= labels.str.contains(
+                    r"on.?location|onboard|aboard|in.?port|arriv|available|ready",
+                    regex=True,
+                )
+
+            if not onboard_mask.any():
+                onboard_mask = ~underway_mask
+
+            key_columns = [rating_column]
+            if vessel_column:
+                key_columns.append(vessel_column)
+            if port_column:
+                key_columns.append(port_column)
+
+            key_frame = pd.DataFrame(
+                {
+                    column: clean_label(data[column])
+                    for column in key_columns
+                }
+            )
+            underway_groups = (
+                key_frame.loc[underway_mask]
+                .groupby(key_columns, dropna=False)
+                .size()
+                .rename("underway_count")
+                .reset_index()
+            )
+            current_groups = (
+                key_frame.loc[onboard_mask]
+                .groupby(key_columns, dropna=False)
+                .size()
+                .rename("onboard_count")
+                .reset_index()
+            )
+
+            if len(underway_groups):
+                safe_threshold = (
+                    underway_groups.groupby(rating_column)[
+                        "underway_count"
+                    ]
+                    .quantile(0.25)
+                    .apply(np.ceil)
+                    .astype(int)
+                    .rename("safe_threshold")
+                    .reset_index()
+                )
+                onboard_rating = (
+                    current_groups.groupby(rating_column)[
+                        "onboard_count"
+                    ]
+                    .sum()
+                    .rename("onboard_count")
+                    .reset_index()
+                )
+                safe_check = safe_threshold.merge(
+                    onboard_rating,
+                    on=rating_column,
+                    how="left",
+                ).fillna({"onboard_count": 0})
+                safe_check["deficit"] = (
+                    safe_check["safe_threshold"]
+                    - safe_check["onboard_count"]
+                )
+
+                if len(safe_check):
+                    worst = safe_check.sort_values(
+                        ["deficit", "safe_threshold"],
+                        ascending=False,
+                    ).iloc[0]
+                    go_status = (
+                        "GOGO" if safe_check["deficit"].max() <= 0 else "NO-GO"
+                    )
+                    signal_strength = float(
+                        min(
+                            1.0,
+                            max(
+                                0.15,
+                                abs(float(worst["deficit"]))
+                                / max(float(worst["safe_threshold"]), 1.0),
+                            ),
+                        )
+                    )
+                    confidence = confidence_label(
+                        int(len(underway_groups)),
+                        float(1 - (underway_mask.mean() or 0.01)),
+                        signal_strength,
+                    )
+                    recommendations.append(
+                        recommendation_record(
+                            "ABS-safe shipboard ratings check before underway",
+                            (
+                                f"{go_status} readiness check for `{escape_markdown(str(worst[rating_column]))}` "
+                                "against the underway baseline."
+                            ),
+                            (
+                                "Use this baseline as the minimum shipboard rating threshold from any port "
+                                "before authorizing underway movement."
+                            ),
+                            confidence,
+                            evidence=(
+                                f"Required ABS-safe baseline: {int(worst['safe_threshold'])}; "
+                                f"currently shipboard: {int(worst['onboard_count'])}; "
+                                f"gap: {int(worst['deficit'])}."
+                            ),
+                            priority=signal_strength,
+                        )
+                    )
+
     numeric_candidates = [
         column
         for column in numeric
@@ -1208,90 +1498,24 @@ def chart_for(
 
 def charts_for(data, numeric, dates, categorical):
     charts = []
-    fallback_signatures = set()
-
-    choices = [
-        ("Bar", None, None),
-        (
-            "Line",
+    choices = {
+        "Bar": (None, None),
+        "Line": (
             dates[0] if dates else None,
             numeric[0] if numeric else None,
         ),
-        (
-            "Scatter",
+        "Scatter": (
             numeric[0] if numeric else None,
             numeric[1] if len(numeric) > 1 else None,
         ),
-        (
-            "Histogram",
+        "Histogram": (
             None,
             numeric[0] if numeric else None,
         ),
-    ]
+        "Quality": (None, None),
+    }
 
-    def alternate_fallback(kind):
-        if kind == "Line" and len(data):
-            sequence = pd.DataFrame(
-                {
-                    "Row": np.arange(1, len(data) + 1),
-                    "Cumulative records": np.arange(1, len(data) + 1),
-                }
-            )
-            return (
-                px.line(
-                    sequence,
-                    x="Row",
-                    y="Cumulative records",
-                    title="Cumulative record sequence",
-                    color_discrete_sequence=["#06b6d4"],
-                ),
-                "Fallback trend when no date/metric pair is available.",
-            )
-
-        cardinality = (
-            data.nunique(dropna=True)
-            .sort_values(ascending=False)
-            .head(12)
-        )
-        if len(cardinality):
-            frame = pd.DataFrame(
-                {
-                    "Field": cardinality.index.astype(str),
-                    "Distinct values": cardinality.values,
-                }
-            )
-            if kind == "Scatter":
-                return (
-                    px.scatter(
-                        frame,
-                        x="Field",
-                        y="Distinct values",
-                        title="Field cardinality snapshot",
-                        color_discrete_sequence=["#ec4899"],
-                    ),
-                    "Distinct-value comparison across fields.",
-                )
-            return (
-                px.bar(
-                    frame.sort_values("Distinct values"),
-                    x="Distinct values",
-                    y="Field",
-                    orientation="h",
-                    title="Distinct values by field",
-                    color_discrete_sequence=["#a855f7"],
-                ),
-                "Fallback schema summary across available fields.",
-            )
-
-        return chart_for(
-            data,
-            numeric,
-            dates,
-            categorical,
-            "Count",
-        )
-
-    for kind, x, y in choices:
+    for kind, (x, y) in choices.items():
         chart, explanation = chart_for(
             data,
             numeric,
@@ -1302,14 +1526,21 @@ def charts_for(data, numeric, dates, categorical):
             y,
         )
 
-        is_fallback = "instead." in explanation
-        if is_fallback and explanation in fallback_signatures:
-            chart, explanation = alternate_fallback(kind)
-            is_fallback = "instead." in explanation
-        if is_fallback:
-            fallback_signatures.add(explanation)
+        if "unavailable for this schema" in explanation:
+            continue
 
         charts.append((chart, explanation))
+
+    if not charts:
+        charts.append(
+            chart_for(
+                data,
+                numeric,
+                dates,
+                categorical,
+                "Count",
+            )
+        )
 
     return charts
 
@@ -1745,7 +1976,7 @@ with st.expander("Ask the local data assistant", expanded=True):
         st.rerun()
 
 
-st.subheader("Four-chart overview")
+st.subheader("Insight charts (all available)")
 
 with st.sidebar:
     st.subheader("Focused chart (optional)")
@@ -1754,7 +1985,7 @@ with st.sidebar:
         "Add a focused custom chart",
         value=False,
         help=(
-            "The dashboard overview always shows four auto-selected visuals. "
+            "The dashboard overview shows all chart types available for the current schema. "
             "Enable this to add one custom chart."
         ),
     )
