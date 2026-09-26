@@ -841,13 +841,34 @@ def recommend_actions(data, numeric, dates, categorical, text):
             )
 
             if len(underway_groups):
-                safe_check = underway_groups.rename(
-                    columns={"underway_count": "safe_threshold"}
-                ).merge(
+                safe_check = underway_groups.merge(
                     current_groups,
                     on=key_columns,
-                    how="left",
-                ).fillna({"onboard_count": 0})
+                    how="outer",
+                )
+                rating_baseline = (
+                    underway_groups.groupby(rating_column)[
+                        "underway_count"
+                    ]
+                    .quantile(0.25)
+                    .apply(np.ceil)
+                    .astype(int)
+                )
+                safe_check["safe_threshold"] = (
+                    safe_check["underway_count"]
+                    .fillna(
+                        safe_check[rating_column].map(
+                            rating_baseline
+                        )
+                    )
+                    .fillna(0)
+                    .astype(int)
+                )
+                safe_check["onboard_count"] = (
+                    safe_check["onboard_count"]
+                    .fillna(0)
+                    .astype(int)
+                )
                 safe_check["deficit"] = (
                     safe_check["safe_threshold"]
                     - safe_check["onboard_count"]
@@ -877,7 +898,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                     )
                     confidence = confidence_label(
                         int(len(underway_groups)),
-                        float(1 - (underway_mask.mean() or 0.01)),
+                        float(max(0.0, 1 - float(underway_mask.mean()))),
                         signal_strength,
                     )
                     recommendations.append(
@@ -1491,6 +1512,49 @@ def chart_for(
     )
 
 
+def chart_available_for_schema(
+    data,
+    numeric,
+    dates,
+    categorical,
+    chart_type,
+):
+    category = best_category(data, categorical)
+    metric = numeric[0] if numeric else None
+
+    if chart_type == "Bar":
+        return bool(category)
+
+    if chart_type == "Line" and dates and metric:
+        frame = pd.DataFrame(
+            {
+                "Date": parse_dates(data[dates[0]]),
+                "Value": pd.to_numeric(data[metric], errors="coerce"),
+            }
+        ).dropna()
+        return bool(len(frame))
+
+    if chart_type == "Scatter" and len(numeric) >= 2:
+        frame = pd.DataFrame(
+            {
+                numeric[0]: pd.to_numeric(data[numeric[0]], errors="coerce"),
+                numeric[1]: pd.to_numeric(data[numeric[1]], errors="coerce"),
+            }
+        ).dropna()
+        return bool(len(frame))
+
+    if chart_type == "Histogram" and metric:
+        return bool(
+            len(pd.to_numeric(data[metric], errors="coerce").dropna())
+        )
+
+    if chart_type == "Quality":
+        missing = data.isna().mean()
+        return bool(len(missing) and missing.max() > 0)
+
+    return False
+
+
 def charts_for(data, numeric, dates, categorical):
     charts = []
     choices = {
@@ -1511,6 +1575,15 @@ def charts_for(data, numeric, dates, categorical):
     }
 
     for kind, (x, y) in choices.items():
+        if not chart_available_for_schema(
+            data,
+            numeric,
+            dates,
+            categorical,
+            kind,
+        ):
+            continue
+
         chart, explanation = chart_for(
             data,
             numeric,
@@ -1520,9 +1593,6 @@ def charts_for(data, numeric, dates, categorical):
             x,
             y,
         )
-
-        if "unavailable for this schema" in explanation:
-            continue
 
         charts.append((chart, explanation))
 
