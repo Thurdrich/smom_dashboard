@@ -1779,9 +1779,14 @@ def build_custom_chart(
         if "Facet" in aggregate:
             group_fields.append("Facet")
 
-        aggregate = (
-            aggregate.groupby(group_fields, dropna=False, as_index=False)["Y"]
-            .mean()
+        aggregate = aggregate.groupby(
+            group_fields,
+            dropna=False,
+            as_index=False,
+        )["Y"].agg(
+            "sum"
+            if chart_type == "Bar"
+            else "mean"
         )
 
         if x_column in dates:
@@ -2166,8 +2171,9 @@ with st.sidebar:
         "Fill missing data to improve chart options",
         value=False,
         help=(
-            "Only chart rendering uses this working copy. Numeric fields are interpolated "
-            "and categorical gaps use the most frequent value."
+            "Only chart rendering uses this working copy. Numeric fields are linearly "
+            "interpolated and edge gaps are forward/back-filled; categorical gaps use "
+            "the most frequent value."
         ),
     )
 
