@@ -1,14 +1,21 @@
-# SMOM Predictive Insight Dashboard
+# SMOM Adaptive Insight Dashboard
 
-SMOM Dashboard is a Streamlit **Predictive Insight Studio**. Upload one or more datasets and the app profiles them, scores prediction readiness, and selects four adaptive charts to reveal trends, concentrations, relationships, and outliers.
+SMOM Dashboard is a Streamlit **Adaptive Insight Dashboard**. Upload one or more datasets and the app profiles them, computes dataset signal/readiness indicators, and renders a polished four-chart overview tuned to the detected schema and filtered data.
 
 ## Supported uploads
 
 - CSV (`.csv`)
 - Excel (`.xlsx`, `.xls`)
 - JSON (`.json`)
+- Parquet (`.parquet`)
+- XML (`.xml`)
 
-Multiple files can be uploaded at once. They are combined by column name, with a `Source file` field added so the result remains traceable. The app only analyzes uploaded data locally (no demo/preview fallback dataset and no external data transfer).
+Multiple files can be uploaded at once. They are combined by column name, with a `Source file` field added so the result remains traceable.
+
+The app is local-only for analysis in-session:
+- no external AI API calls
+- no external data transfer
+- no bundled preview/demo fallback dataset
 
 ## Run locally
 
@@ -21,4 +28,10 @@ The Streamlit app entrypoint is `app.py`. Streamlit Cloud can deploy the `main` 
 
 ## How the analysis works
 
-The dashboard detects numeric, categorical, and date-like fields without requiring a particular schema. It then generates four views from available signals and supports an optional focused chart, including a field-level signal-strength view. The app also reports a prediction-readiness score based on data coverage, schema richness, trendability, and signal density. Recommendations and assistant responses are generated from the active filtered dataset only.
+The dashboard detects numeric, categorical, text, and date-like fields without requiring a fixed schema.
+
+- **Core dashboard:** always renders a 4-chart adaptive overview (composition, trend, relationship, distribution) with schema-aware fallbacks so visuals still remain useful when some chart types are not viable.
+- **Focused custom chart (optional):** you can add one extra chart without replacing the core four-chart overview.
+- **Assistant recommendations:** after chart rendering, recommendations are generated from findings in the current filtered dataset and presented as follow-up guidance.
+- **Local assistant chat:** a rule-based assistant answers questions using only the uploaded/filtered data.
+- **Dataset signal summary:** readiness and signal indicators are shown from coverage/schema/trendability/signal density in the current filtered slice.

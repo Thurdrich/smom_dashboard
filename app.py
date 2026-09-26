@@ -34,6 +34,8 @@ label { color:var(--text) !important; }
 h1,h2,h3 { color:#fff !important; text-shadow:0 0 10px rgba(168,85,247,.3); }
 .recommendation-card { background:linear-gradient(145deg,rgba(6,182,212,.1),rgba(168,85,247,.1)); border:1px solid rgba(6,182,212,.45); border-left:4px solid var(--cyan); border-radius:12px; padding:14px 16px; margin-bottom:12px; color:var(--text); min-height:150px; }
 .recommendation-confidence { display:inline-block; margin-top:8px; padding:2px 8px; border-radius:999px; background:rgba(168,85,247,.2); color:#e9d5ff; font-size:.8rem; font-weight:700; }
+[data-testid="stFileUploaderDropzone"] { background:rgba(15,21,51,.78); border:1px solid var(--cyan); }
+[data-testid="stFileUploaderDropzone"] div { color:var(--text) !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1093,6 +1095,23 @@ def chart_for(
             f"{reason} Showing a dataset summary instead.",
         )
 
+    def best_metric_column():
+        candidates = []
+        for column in numeric:
+            values = pd.to_numeric(data[column], errors="coerce")
+            candidates.append(
+                (
+                    values.notna().mean(),
+                    values.std(skipna=True) > 0,
+                    values.nunique(dropna=True),
+                    column,
+                )
+            )
+        return max(candidates)[-1] if candidates else metric
+
+    if y_column not in data.columns:
+        metric = best_metric_column()
+
     if chart_type == "Auto":
         for candidate, is_possible in [
             ("Bar", bool(category)),
@@ -1182,8 +1201,34 @@ def chart_for(
             )
 
     if chart_type == "Scatter" and len(numeric) >= 2:
-        x = x_column if x_column in numeric else numeric[0]
-        y = y_column if y_column in numeric else numeric[1]
+        pair_candidates = []
+        for index, left in enumerate(numeric):
+            left_values = pd.to_numeric(data[left], errors="coerce")
+            for right in numeric[index + 1 :]:
+                right_values = pd.to_numeric(data[right], errors="coerce")
+                overlap = (
+                    pd.concat([left_values, right_values], axis=1)
+                    .dropna()
+                )
+                if len(overlap) < 5:
+                    continue
+                pair_candidates.append(
+                    (
+                        len(overlap),
+                        overlap.iloc[:, 0].std(skipna=True) > 0,
+                        overlap.iloc[:, 1].std(skipna=True) > 0,
+                        left,
+                        right,
+                    )
+                )
+
+        if x_column in numeric and y_column in numeric and x_column != y_column:
+            x, y = x_column, y_column
+        elif pair_candidates:
+            _, _, _, x, y = max(pair_candidates)
+        else:
+            x, y = numeric[0], numeric[1]
+
         if x == y:
             alternatives = [column for column in numeric if column != x]
             if alternatives:
@@ -1207,6 +1252,63 @@ def chart_for(
                 ),
                 "Relationship between two numeric fields",
             )
+
+    if chart_type == "Box" and metric and category:
+        frame = pd.DataFrame(
+            {
+                "Category": clean_label(data[category]),
+                metric: pd.to_numeric(data[metric], errors="coerce"),
+            }
+        ).dropna()
+
+        if len(frame):
+            category_order = (
+                frame["Category"]
+                .value_counts()
+                .head(8)
+                .index
+                .tolist()
+            )
+            frame = frame[frame["Category"].isin(category_order)]
+            if len(frame):
+                return (
+                    px.box(
+                        frame,
+                        x="Category",
+                        y=metric,
+                        title=f"{metric} variation by {category}",
+                        color_discrete_sequence=["#ec4899"],
+                    ),
+                    "Distribution spread by category",
+                )
+
+    if chart_type == "CountTimeline" and dates:
+        date_column = x_column if x_column in dates else dates[0]
+        frame = pd.DataFrame(
+            {
+                "Date": parse_dates(data[date_column]),
+            }
+        ).dropna()
+        if len(frame):
+            frame["Date"] = frame["Date"].dt.normalize()
+            trend = (
+                frame.groupby("Date", as_index=False)
+                .size()
+                .rename(columns={"size": "Records"})
+                .sort_values("Date")
+            )
+            if len(trend):
+                return (
+                    px.line(
+                        trend,
+                        x="Date",
+                        y="Records",
+                        markers=True,
+                        title=f"Record volume over {date_column}",
+                        color_discrete_sequence=["#06b6d4"],
+                    ),
+                    "Record-volume trend across the detected time field",
+                )
 
     if chart_type == "Histogram" and metric:
         metric_values = pd.to_numeric(
@@ -1251,7 +1353,7 @@ def chart_for(
             "Relative signal strength by field",
         )
 
-    if chart_type in {"Count", "Bar", "Line", "Scatter", "Histogram"}:
+    if chart_type in {"Count", "Bar", "Line", "Scatter", "Histogram", "Box", "CountTimeline"}:
         return fallback_count(
             f"{chart_type} view was unavailable for this schema."
         )
@@ -1266,22 +1368,10 @@ def charts_for(data, numeric, dates, categorical):
     fallback_signatures = set()
 
     choices = [
-        ("Bar", None, None),
-        (
-            "Line",
-            dates[0] if dates else None,
-            numeric[0] if numeric else None,
-        ),
-        (
-            "Scatter",
-            numeric[0] if numeric else None,
-            numeric[1] if len(numeric) > 1 else None,
-        ),
-        (
-            "Histogram",
-            None,
-            numeric[0] if numeric else None,
-        ),
+        ["Bar", "Histogram", "Count"],
+        ["Line", "CountTimeline", "Bar", "Count"],
+        ["Scatter", "Box", "Bar", "Count"],
+        ["Histogram", "Box", "Bar", "Count"],
     ]
 
     def alternate_fallback(kind):
@@ -1346,20 +1436,27 @@ def charts_for(data, numeric, dates, categorical):
             "Count",
         )
 
-    for kind, x, y in choices:
-        chart, explanation = chart_for(
-            data,
-            numeric,
-            dates,
-            categorical,
-            kind,
-            x,
-            y,
-        )
+    for slot_index, slot_kinds in enumerate(choices):
+        chart = None
+        explanation = ""
+        for kind in slot_kinds:
+            chart, explanation = chart_for(
+                data,
+                numeric,
+                dates,
+                categorical,
+                kind,
+                dates[0] if dates else None,
+                numeric[0] if numeric else None,
+            )
+            if "unavailable for this schema" not in explanation:
+                break
 
         is_fallback = "instead." in explanation
         if is_fallback and explanation in fallback_signatures:
-            chart, explanation = alternate_fallback(kind)
+            chart, explanation = alternate_fallback(
+                "Line" if slot_index == 1 else "Bar"
+            )
             is_fallback = "instead." in explanation
         if is_fallback:
             fallback_signatures.add(explanation)
@@ -1569,32 +1666,30 @@ def local_answer(question, data, numeric, dates, categorical, text):
 
 
 with st.sidebar:
-    st.header("Upload your data")
+    st.header("Upload data")
 
     uploads = st.file_uploader(
-        "Add one or more datasets",
+        "Upload dataset files",
         type=SUPPORTED_TYPES,
         accept_multiple_files=True,
+        help="CSV, Excel, JSON, Parquet, and XML are supported.",
     )
 
     st.caption(
-        "Supported: CSV, Excel, JSON, Parquet, XML. "
-        "Files are analyzed in-session."
+        "Add one or more files. The dashboard auto-adapts its four core charts "
+        "to the current dataset and filters."
     )
-    st.caption(
-        "Data is shown exactly as uploaded in this local session. "
-        "Remove direct identifiers before upload if needed."
-    )
+    st.caption("Everything runs locally in this session; no external data transfer.")
 
 
 uploaded_data, errors = load_uploads(uploads)
 analysis_data = uploaded_data
 
-st.title("🔮 SMOM | Predictive Insight Studio")
+st.title("🔮 SMOM | Adaptive Insight Dashboard")
 
 st.caption(
-    "Personalized, local-only predictive insights generated from your uploaded data—"
-    "no external API or data transfer."
+    "Upload your data to generate a local-only, adaptive four-chart overview "
+    "plus assistant guidance based on the active filtered dataset."
 )
 
 for error in errors:
@@ -1694,79 +1789,6 @@ else "Signal profile is moderate; refine filters to strengthen predictions."}
 """,
     unsafe_allow_html=True,
 )
-
-
-st.subheader("Recommended actions")
-st.markdown(
-    '<div role="list" aria-label="Recommended actions">',
-    unsafe_allow_html=True,
-)
-
-for recommendation in recommendations[:4]:
-    recommendation_html = f"""
-    <article class="recommendation-card" role="listitem">
-        <h4>{html.escape(recommendation["title"])}</h4>
-        <p><strong>Insight:</strong> {html.escape(recommendation["insight"])}</p>
-        <p><strong>Suggested action:</strong> {html.escape(recommendation["action"])}</p>
-        {f"<p><strong>Evidence:</strong> {html.escape(recommendation['evidence'])}</p>" if recommendation.get("evidence") else ""}
-        <span class="recommendation-confidence">
-            Confidence: {html.escape(recommendation["confidence"])}
-        </span>
-    </article>
-    """
-    st.markdown(
-        recommendation_html,
-        unsafe_allow_html=True,
-    )
-
-st.markdown(
-    "</div>",
-    unsafe_allow_html=True,
-)
-
-
-with st.expander("Ask the local data assistant", expanded=True):
-    st.caption(
-        "This assistant uses rules and statistics from the current filtered "
-        "data only; it does not call an external AI service."
-    )
-
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-
-    for message in st.session_state.chat_history:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    question = st.chat_input(
-        "Ask about key signals, trend shifts, likely drivers, or request a chart change…"
-    )
-
-    if question:
-        st.session_state.chat_history.append(
-            {
-                "role": "user",
-                "content": question,
-            }
-        )
-
-        answer = local_answer(
-            question,
-            filtered,
-            numeric,
-            dates,
-            categorical,
-            text,
-        )
-
-        st.session_state.chat_history.append(
-            {
-                "role": "assistant",
-                "content": answer,
-            }
-        )
-
-        st.rerun()
 
 
 st.subheader("Adaptive four-chart overview")
@@ -1885,65 +1907,84 @@ if custom_view:
     st.caption(f"Focused chart: {focused_note}")
 
 
-with st.expander("Signal workspace and prepared data"):
-    prepared = filtered
-    st.warning(
-        "Prepared data preview and downloads include raw uploaded values "
-        "(unmasked). Confirm your dataset is safe to display locally before sharing screens or files."
-    )
-    snapshot_metrics = st.columns(3)
-    snapshot_metrics[0].metric("Prepared rows", f"{len(prepared):,}")
-    snapshot_metrics[1].metric("Prepared fields", f"{len(prepared.columns):,}")
-    snapshot_metrics[2].metric(
-        "Prediction readiness",
-        f"{readiness_profile['readiness_score']:.0%}",
+st.subheader("Assistant recommendations")
+st.caption(
+    "Follow-up guidance generated from the currently rendered charts and active filters."
+)
+st.markdown(
+    f'<div class="insight"><strong>Current chart finding:</strong> {insights(filtered, numeric, dates, categorical, text)}</div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div role="list" aria-label="Recommended actions">',
+    unsafe_allow_html=True,
+)
+
+for recommendation in recommendations[:4]:
+    recommendation_html = f"""
+    <article class="recommendation-card" role="listitem">
+        <h4>{html.escape(recommendation["title"])}</h4>
+        <p><strong>Insight:</strong> {html.escape(recommendation["insight"])}</p>
+        <p><strong>Suggested action:</strong> {html.escape(recommendation["action"])}</p>
+        {f"<p><strong>Evidence:</strong> {html.escape(recommendation['evidence'])}</p>" if recommendation.get("evidence") else ""}
+        <span class="recommendation-confidence">
+            Confidence: {html.escape(recommendation["confidence"])}
+        </span>
+    </article>
+    """
+    st.markdown(
+        recommendation_html,
+        unsafe_allow_html=True,
     )
 
-    field_signal_summary = readiness_profile["field_signal"].head(10)
-    if len(field_signal_summary):
-        st.caption("Top feature signals in prepared data")
-        st.dataframe(
-            pd.DataFrame(
-                {
-                    "Field": field_signal_summary.index,
-                    "Signal score": field_signal_summary.values,
-                }
-            ),
-            use_container_width=True,
-            hide_index=True,
+st.markdown(
+    "</div>",
+    unsafe_allow_html=True,
+)
+
+
+with st.expander("Ask the local data assistant", expanded=True):
+    st.caption(
+        "This assistant uses rules and statistics from the current filtered "
+        "data only; it does not call an external AI service."
+    )
+
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    for message in st.session_state.chat_history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    question = st.chat_input(
+        "Ask about key signals, trend shifts, likely drivers, or request a chart change…"
+    )
+
+    if question:
+        st.session_state.chat_history.append(
+            {
+                "role": "user",
+                "content": question,
+            }
         )
 
-    weak_signal_summary = readiness_profile["field_signal"].sort_values().head(10)
-    if len(weak_signal_summary):
-        st.caption("Weakest feature signals in prepared data")
-        st.dataframe(
-            pd.DataFrame(
-                {
-                    "Field": weak_signal_summary.index,
-                    "Signal score": weak_signal_summary.values,
-                }
-            ),
-            use_container_width=True,
-            hide_index=True,
+        answer = local_answer(
+            question,
+            filtered,
+            numeric,
+            dates,
+            categorical,
+            text,
         )
 
-    show_raw_prepared = st.checkbox(
-        "Show raw prepared sample (first 75 rows)",
-        value=False,
-    )
-    if show_raw_prepared:
-        st.dataframe(
-            prepared.head(75),
-            use_container_width=True,
-            hide_index=True,
+        st.session_state.chat_history.append(
+            {
+                "role": "assistant",
+                "content": answer,
+            }
         )
 
-    st.download_button(
-        "Download prepared view",
-        prepared.to_csv(index=False).encode("utf-8"),
-        "smom_predictive_prepared_data.csv",
-        "text/csv",
-    )
+        st.rerun()
 
 
 st.caption(
