@@ -658,145 +658,147 @@ def recommend_actions(data, numeric, dates, categorical, text):
         ("importance", "priority", "weight", "critical"),
     )
 
-    if rating_column and traffic_column:
-        traveler_frame = pd.DataFrame(
-            {
-                "rating": clean_label(data[rating_column]),
-                "traffic_raw": clean_label(data[traffic_column]),
-                "port": (
-                    clean_label(data[port_column])
-                    if port_column
-                    else "All ports"
-                ),
-            }
-        )
-        traveler_frame["traffic_active"] = traveler_frame[
-            "traffic_raw"
-        ].str.contains(
-            r"going|leave|leaving|underway|depart|outbound|sail|transit|move",
-            case=False,
-            regex=True,
-        )
-
-        if importance_column:
-            traveler_frame["importance_value"] = pd.to_numeric(
-                data[importance_column],
-                errors="coerce",
+    if rating_column:
+        if traffic_column:
+            traveler_frame = pd.DataFrame(
+                {
+                    "rating": clean_label(data[rating_column]),
+                    "traffic_raw": clean_label(data[traffic_column]),
+                    "port": (
+                        clean_label(data[port_column])
+                        if port_column
+                        else "All ports"
+                    ),
+                }
             )
-        else:
-            traveler_frame["importance_value"] = traveler_frame[
-                "rating"
+            traveler_frame["traffic_active"] = traveler_frame[
+                "traffic_raw"
             ].str.contains(
-                r"master|chief|capt|mate|engineer|officer",
+                r"going|leave|leaving|underway|depart|outbound|sail|transit|move",
                 case=False,
                 regex=True,
-            ).astype(float)
+            )
 
-        traveler_frame["importance_value"] = traveler_frame[
-            "importance_value"
-        ].fillna(
-            traveler_frame["importance_value"].median()
-            if traveler_frame["importance_value"].notna().any()
-            else 0.5
-        )
-
-        grouped = (
-            traveler_frame.groupby(["rating", "port"], dropna=False)
-            .agg(
-                traffic_count=("traffic_active", "sum"),
-                total_count=("traffic_active", "size"),
-                importance_avg=("importance_value", "mean"),
-            )
-            .reset_index()
-        )
-
-        active_groups = grouped[grouped["traffic_count"] > 0].copy()
-        if len(active_groups):
-            max_traffic = max(
-                float(active_groups["traffic_count"].max()),
-                1.0,
-            )
-            active_groups["traffic_intensity"] = (
-                active_groups["traffic_count"]
-                / active_groups["total_count"].clip(lower=1)
-            )
-            importance_min = float(active_groups["importance_avg"].min())
-            importance_span = float(
-                active_groups["importance_avg"].max()
-                - importance_min
-            )
-            if importance_span > 0:
-                active_groups["importance_score"] = (
-                    active_groups["importance_avg"] - importance_min
-                ) / importance_span
+            if importance_column:
+                traveler_frame["importance_value"] = pd.to_numeric(
+                    data[importance_column],
+                    errors="coerce",
+                )
             else:
-                active_groups["importance_score"] = 0.5
+                traveler_frame["importance_value"] = traveler_frame[
+                    "rating"
+                ].str.contains(
+                    r"master|chief|capt|mate|engineer|officer",
+                    case=False,
+                    regex=True,
+                ).astype(float)
 
-            active_groups["priority_score"] = (
-                (active_groups["traffic_count"] / max_traffic) * 0.55
-                + active_groups["traffic_intensity"] * 0.25
-                + active_groups["importance_score"] * 0.20
+            traveler_frame["importance_value"] = traveler_frame[
+                "importance_value"
+            ].fillna(
+                traveler_frame["importance_value"].median()
+                if traveler_frame["importance_value"].notna().any()
+                else 0.5
             )
 
-            top_group = active_groups.sort_values(
-                [
-                    "priority_score",
-                    "traffic_count",
-                    "traffic_intensity",
-                    "importance_avg",
-                    "rating",
-                    "port",
-                ],
-                ascending=[False, False, False, False, True, True],
-            ).iloc[0]
-
-            missingness = (
-                traveler_frame[["rating", "traffic_raw"]]
-                .isna()
-                .mean()
-                .mean()
-            )
-            signal_strength = float(
-                min(1.0, top_group["priority_score"])
-            )
-            confidence = confidence_label(
-                len(traveler_frame),
-                float(missingness),
-                signal_strength,
-            )
-            recommendations.append(
-                recommendation_record(
-                    "Traveler group to prioritize first",
-                    (
-                        f"`{escape_markdown(str(top_group['rating']))}` at "
-                        f"`{escape_markdown(str(top_group['port']))}` carries the strongest "
-                        "traffic-weighted priority signal."
-                    ),
-                    (
-                        "Prioritize this traveler group first for routing, clearance, and seat/berth "
-                        "allocation before lower-traffic cohorts."
-                    ),
-                    confidence,
-                    evidence=(
-                        f"Traffic-active records: {int(top_group['traffic_count']):,} of "
-                        f"{int(top_group['total_count']):,}; weighted priority score "
-                        f"{top_group['priority_score']:.2f}."
-                    ),
-                    priority=signal_strength,
+            grouped = (
+                traveler_frame.groupby(["rating", "port"], dropna=False)
+                .agg(
+                    traffic_count=("traffic_active", "sum"),
+                    total_count=("traffic_active", "size"),
+                    importance_avg=("importance_value", "mean"),
                 )
+                .reset_index()
             )
 
-            underway_columns = [
-                column
-                for column in category_like
-                if any(
-                    key in str(column).lower()
-                    for key in ("status", "in/out", "movement", "traffic")
+            active_groups = grouped[grouped["traffic_count"] > 0].copy()
+            if len(active_groups):
+                max_traffic = max(
+                    float(active_groups["traffic_count"].max()),
+                    1.0,
                 )
-            ]
-            if not underway_columns:
-                underway_columns = [traffic_column]
+                active_groups["traffic_intensity"] = (
+                    active_groups["traffic_count"]
+                    / active_groups["total_count"].clip(lower=1)
+                )
+                importance_min = float(active_groups["importance_avg"].min())
+                importance_span = float(
+                    active_groups["importance_avg"].max()
+                    - importance_min
+                )
+                if importance_span > 0:
+                    active_groups["importance_score"] = (
+                        active_groups["importance_avg"] - importance_min
+                    ) / importance_span
+                else:
+                    active_groups["importance_score"] = 0.5
 
+                active_groups["priority_score"] = (
+                    (active_groups["traffic_count"] / max_traffic) * 0.55
+                    + active_groups["traffic_intensity"] * 0.25
+                    + active_groups["importance_score"] * 0.20
+                )
+
+                top_group = active_groups.sort_values(
+                    [
+                        "priority_score",
+                        "traffic_count",
+                        "traffic_intensity",
+                        "importance_avg",
+                        "rating",
+                        "port",
+                    ],
+                    ascending=[False, False, False, False, True, True],
+                ).iloc[0]
+
+                missingness = (
+                    traveler_frame[["rating", "traffic_raw"]]
+                    .isna()
+                    .mean()
+                    .mean()
+                )
+                signal_strength = float(
+                    min(1.0, top_group["priority_score"])
+                )
+                confidence = confidence_label(
+                    len(traveler_frame),
+                    float(missingness),
+                    signal_strength,
+                )
+                recommendations.append(
+                    recommendation_record(
+                        "Traveler group to prioritize first",
+                        (
+                            f"`{escape_markdown(str(top_group['rating']))}` at "
+                            f"`{escape_markdown(str(top_group['port']))}` carries the strongest "
+                            "traffic-weighted priority signal."
+                        ),
+                        (
+                            "Prioritize this traveler group first for routing, clearance, and seat/berth "
+                            "allocation before lower-traffic cohorts."
+                        ),
+                        confidence,
+                        evidence=(
+                            f"Traffic-active records: {int(top_group['traffic_count']):,} of "
+                            f"{int(top_group['total_count']):,}; weighted priority score "
+                            f"{top_group['priority_score']:.2f}."
+                        ),
+                        priority=signal_strength,
+                    )
+                )
+
+        underway_columns = [
+            column
+            for column in category_like
+            if any(
+                key in str(column).lower()
+                for key in ("status", "in/out", "movement", "traffic")
+            )
+        ]
+        if traffic_column and traffic_column not in underway_columns:
+            underway_columns.append(traffic_column)
+
+        if underway_columns:
             underway_mask = pd.Series(False, index=data.index)
             onboard_mask = pd.Series(False, index=data.index)
             for column in underway_columns:
@@ -810,6 +812,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                     regex=True,
                 )
 
+            onboard_mask &= ~underway_mask
             if not onboard_mask.any():
                 onboard_mask = ~underway_mask
 
@@ -825,13 +828,6 @@ def recommend_actions(data, numeric, dates, categorical, text):
                     for column in key_columns
                 }
             )
-            underway_groups = (
-                key_frame.loc[underway_mask]
-                .groupby(key_columns, dropna=False)
-                .size()
-                .rename("underway_count")
-                .reset_index()
-            )
             current_groups = (
                 key_frame.loc[onboard_mask]
                 .groupby(key_columns, dropna=False)
@@ -839,83 +835,80 @@ def recommend_actions(data, numeric, dates, categorical, text):
                 .rename("onboard_count")
                 .reset_index()
             )
-
-            if len(underway_groups):
-                safe_check = underway_groups.merge(
-                    current_groups,
-                    on=key_columns,
-                    how="outer",
-                )
-                safe_check["safe_threshold"] = (
-                    safe_check["underway_count"]
-                    .fillna(0)
+            if len(current_groups):
+                baseline_by_rating = (
+                    current_groups.groupby(rating_column)[
+                        "onboard_count"
+                    ]
+                    .median()
+                    .apply(np.ceil)
+                    .clip(lower=1)
                     .astype(int)
                 )
-                safe_check["onboard_count"] = (
-                    safe_check["onboard_count"]
-                    .fillna(0)
+                safe_check = current_groups.copy()
+                safe_check["safe_threshold"] = (
+                    safe_check[rating_column]
+                    .map(baseline_by_rating)
+                    .fillna(1)
                     .astype(int)
                 )
                 safe_check["deficit"] = (
                     safe_check["safe_threshold"]
                     - safe_check["onboard_count"]
                 )
-
-                if len(safe_check):
-                    has_deficit = bool((safe_check["deficit"] > 0).any())
-                    go_status = "NO-GO" if has_deficit else "GO"
-                    if has_deficit:
-                        selected_group = safe_check.sort_values(
-                            ["deficit", "safe_threshold"],
-                            ascending=False,
-                        ).iloc[0]
-                    else:
-                        selected_group = safe_check.iloc[
-                            safe_check["deficit"].abs().argmin()
-                        ]
-                    unit_parts = [
-                        f"{column}: {selected_group[column]}"
-                        for column in key_columns
+                has_deficit = bool((safe_check["deficit"] > 0).any())
+                go_status = "NO-GO" if has_deficit else "GO"
+                if has_deficit:
+                    selected_group = safe_check.sort_values(
+                        ["deficit", "safe_threshold"],
+                        ascending=False,
+                    ).iloc[0]
+                else:
+                    selected_group = safe_check.iloc[
+                        safe_check["deficit"].abs().argmin()
                     ]
-                    unit_label = ", ".join(unit_parts)
-                    signal_strength = float(
-                        min(
-                            1.0,
-                            max(
-                                0.15,
-                                abs(float(selected_group["deficit"]))
-                                / max(
-                                    float(selected_group["safe_threshold"]),
-                                    1.0,
-                                ),
+                unit_label = ", ".join(
+                    f"{column}: {selected_group[column]}"
+                    for column in key_columns
+                )
+                signal_strength = float(
+                    min(
+                        1.0,
+                        max(
+                            0.15,
+                            abs(float(selected_group["deficit"]))
+                            / max(
+                                float(selected_group["safe_threshold"]),
+                                1.0,
                             ),
-                        )
+                        ),
                     )
-                    confidence = confidence_label(
-                        int(len(underway_groups)),
-                        float(max(0.0, 1 - float(underway_mask.mean()))),
-                        signal_strength,
+                )
+                confidence = confidence_label(
+                    int(len(safe_check)),
+                    float(max(0.0, 1 - float(onboard_mask.mean()))),
+                    signal_strength,
+                )
+                recommendations.append(
+                    recommendation_record(
+                        "ABS-safe shipboard ratings check before underway",
+                        (
+                            f"{go_status} readiness check for `{escape_markdown(unit_label)}` "
+                            "against the shipboard minimum baseline."
+                        ),
+                        (
+                            "Use this baseline as the minimum shipboard rating threshold from any port "
+                            "before authorizing underway movement."
+                        ),
+                        confidence,
+                        evidence=(
+                            f"Required ABS-safe baseline: {int(selected_group['safe_threshold'])}; "
+                            f"currently shipboard: {int(selected_group['onboard_count'])}; "
+                            f"deficit: {int(selected_group['deficit'])}."
+                        ),
+                        priority=signal_strength,
                     )
-                    recommendations.append(
-                        recommendation_record(
-                            "ABS-safe shipboard ratings check before underway",
-                            (
-                                f"{go_status} readiness check for `{escape_markdown(unit_label)}` "
-                                "against the same-unit underway baseline."
-                            ),
-                            (
-                                "Use this baseline as the minimum shipboard rating threshold from any port "
-                                "before authorizing underway movement."
-                            ),
-                            confidence,
-                            evidence=(
-                                f"Required ABS-safe baseline: {int(selected_group['safe_threshold'])}; "
-                                f"currently shipboard: {int(selected_group['onboard_count'])}; "
-                                f"deficit: {int(selected_group['deficit'])}."
-                            ),
-                            priority=signal_strength,
-                        )
-                    )
+                )
 
     numeric_candidates = [
         column
@@ -1554,24 +1547,27 @@ def chart_available_for_schema(
 
 def charts_for(data, numeric, dates, categorical):
     charts = []
-    choices = {
-        "Bar": (None, None),
-        "Line": (
+    choices = [
+        ("Bar", None, None),
+        (
+            "Line",
             dates[0] if dates else None,
             numeric[0] if numeric else None,
         ),
-        "Scatter": (
+        (
+            "Scatter",
             numeric[0] if numeric else None,
             numeric[1] if len(numeric) > 1 else None,
         ),
-        "Histogram": (
+        (
+            "Histogram",
             None,
             numeric[0] if numeric else None,
         ),
-        "Quality": (None, None),
-    }
+        ("Quality", None, None),
+    ]
 
-    for kind, (x, y) in choices.items():
+    for kind, x, y in choices:
         if not chart_available_for_schema(
             data,
             numeric,
