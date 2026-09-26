@@ -1501,7 +1501,11 @@ def local_answer(question, data, numeric, dates, categorical, text):
         )
 
     return (
-        "I can answer questions about manning gaps, TDY/travel backlog, port readiness trends, missingness, and chart choices using only this dataset."
+        (
+            "I can answer questions about manning gaps, TDY/travel backlog, port readiness trends, missingness, and chart choices using only this dataset."
+            if terms["records"] != "records"
+            else "I can answer questions about row counts, missingness, detected dates, categories, numeric summaries, and chart choices using only this dataset."
+        )
     )
 
 
