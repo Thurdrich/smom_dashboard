@@ -858,9 +858,8 @@ def recommend_actions(data, numeric, dates, categorical, text):
                         ["deficit", "safe_threshold"],
                         ascending=False,
                     ).iloc[0]
-                    go_status = (
-                        "GO" if safe_check["deficit"].max() <= 0 else "NO-GO"
-                    )
+                    has_deficit = bool((safe_check["deficit"] > 0).any())
+                    go_status = "NO-GO" if has_deficit else "GO"
                     unit_parts = [
                         f"{column}: {worst[column]}"
                         for column in key_columns
@@ -896,7 +895,7 @@ def recommend_actions(data, numeric, dates, categorical, text):
                             evidence=(
                                 f"Required ABS-safe baseline: {int(worst['safe_threshold'])}; "
                                 f"currently shipboard: {int(worst['onboard_count'])}; "
-                                f"gap: {int(worst['deficit'])}."
+                                f"deficit: {int(worst['deficit'])}."
                             ),
                             priority=signal_strength,
                         )
