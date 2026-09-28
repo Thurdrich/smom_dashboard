@@ -70,6 +70,41 @@ DATE_WORDS = (
     "distributed",
 )
 
+NAME_WORDS = (
+    "full name",
+    "last name",
+    "first name",
+    "traveler",
+    "traveller",
+    "member",
+    "employee",
+    "civmar",
+    "pax",
+    "passenger",
+    "name",
+)
+
+KNOWN_TERMINALS = {
+    "Norfolk, VA MSC terminal": (
+        "norfolk",
+        "ngu",
+        "orf",
+        "nob",
+    ),
+    "Diego Garcia government MSC terminal": (
+        "diego garcia",
+        "dgo",
+        "dgar",
+        "dg",
+    ),
+    "Singapore government MSC terminal": (
+        "singapore",
+        "sgp",
+        "sin",
+        "sng",
+    ),
+}
+
 RECOMMENDATION_PATTERN = re.compile(
     r"\brecommend(?:ation|ed)?s?\b|"
     r"\bnext steps?\b|"
@@ -464,6 +499,42 @@ def metric_direction(column_name):
 
 def maritime_context(data):
     names = " ".join(map(str, data.columns)).lower()
+    explicit_travel = any(
+        word in names
+        for word in (
+            "tdy",
+            "orders",
+            "leave",
+            "liberty",
+            "pcs",
+            "duty station",
+            "travel voucher",
+            "travel",
+            "per diem",
+            "itinerary",
+        )
+    )
+    civmar_movement = (
+        any(word in names for word in ("civmar", "traveler", "traveller", "pax", "passenger"))
+        and any(
+            word in names
+            for word in (
+                "flight",
+                "leg",
+                "location",
+                "lodging",
+                "doa",
+                "o/d",
+                "origin",
+                "destination",
+                "terminal",
+                "departure",
+                "arrival",
+                "movement",
+                "in/out",
+            )
+        )
+    )
     return {
         "crew": any(
             word in names
@@ -477,21 +548,7 @@ def maritime_context(data):
                 "berthing",
             )
         ),
-        "travel": any(
-            word in names
-            for word in (
-                "tdy",
-                "orders",
-                "leave",
-                "liberty",
-                "pcs",
-                "duty station",
-                "travel voucher",
-                "travel",
-                "per diem",
-                "itinerary",
-            )
-        ),
+        "travel": explicit_travel or civmar_movement,
         "port": any(
             word in names
             for word in (
@@ -541,6 +598,565 @@ def domain_terms(data):
         "records": "records",
         "segment": "segment",
         "focus": "operations",
+    }
+
+
+def now_timestamp():
+    return pd.Timestamp.utcnow().tz_localize(None)
+
+
+def detect_name_column(data):
+    candidates = []
+
+    for column in data.columns:
+        if column == "Source file":
+            continue
+
+        name = str(column).lower()
+        score = sum(word in name for word in NAME_WORDS)
+        if score:
+            candidates.append(
+                (
+                    score,
+                    data[column].notna().mean(),
+                    data[column].nunique(dropna=True),
+                    column,
+                )
+            )
+
+    return max(candidates)[-1] if candidates else None
+
+
+def compact_name(value):
+    if pd.isna(value):
+        return None
+
+    text = str(value).strip()
+    if not text or text.lower() == "missing":
+        return None
+
+    if "," in text:
+        last, first = [part.strip() for part in text.split(",", 1)]
+        first_token = first.split()[0] if first else ""
+        if first_token and last:
+            return f"{first_token[0].upper()}. {last.title()}"
+
+    parts = [part for part in re.split(r"\s+", text) if part]
+    if len(parts) >= 2:
+        return f"{parts[0][0].upper()}. {parts[-1].title()}"
+
+    return text.title() if text.isupper() else text
+
+
+def unique_compact_names(series, limit=None):
+    names = []
+    seen = set()
+
+    for value in series:
+        compact = compact_name(value)
+        if not compact or compact in seen:
+            continue
+
+        seen.add(compact)
+        names.append(compact)
+
+        if limit and len(names) >= limit:
+            break
+
+    return names
+
+
+def preview_names(series, limit=3):
+    names = unique_compact_names(series, limit=limit + 1)
+
+    if not names:
+        return ""
+
+    preview = names[:limit]
+    if len(names) > limit:
+        preview.append(f"+{len(names) - limit} more")
+
+    return ", ".join(preview)
+
+
+def travel_schema(data, numeric, dates, categorical, text):
+    columns = [column for column in data.columns if column != "Source file"]
+    date_candidates = [
+        column
+        for column in columns
+        if column in dates
+        or parse_dates(data[column], column).notna().mean() >= .2
+    ]
+    numeric_candidates = [
+        column for column in numeric if column in data.columns
+    ]
+
+    expected_date = best_matching_column(
+        data,
+        date_candidates,
+        (
+            "expected",
+            "planned",
+            "scheduled",
+            "schedule",
+            "projected",
+            "forecast",
+            "due",
+            "eta",
+            "etd",
+            "start",
+            "departure",
+            "depart",
+            "travel",
+            "itinerary",
+            "date",
+        ),
+        ("actual", "completed", "executed"),
+    )
+    actual_date = best_matching_column(
+        data,
+        [
+            column
+            for column in date_candidates
+            if column != expected_date
+        ],
+        (
+            "actual",
+            "executed",
+            "completed",
+            "complete",
+            "arrived",
+            "arrival",
+            "doa",
+            "debark",
+            "embark",
+            "return",
+            "end",
+            "date",
+        ),
+        ("expected", "planned", "scheduled"),
+    )
+
+    expected_count = best_matching_column(
+        data,
+        numeric_candidates,
+        (
+            "expected",
+            "planned",
+            "scheduled",
+            "forecast",
+            "demand",
+            "count",
+            "volume",
+        ),
+        ("actual", "completed", "executed"),
+    )
+    actual_count = best_matching_column(
+        data,
+        [
+            column
+            for column in numeric_candidates
+            if column != expected_count
+        ],
+        (
+            "actual",
+            "executed",
+            "completed",
+            "complete",
+            "count",
+            "volume",
+        ),
+        ("expected", "planned", "scheduled"),
+    )
+
+    status_column = best_matching_column(
+        data,
+        columns,
+        ("status", "state"),
+    )
+    terminal_column = best_matching_column(
+        data,
+        columns,
+        ("terminal", "port of call", "terminal location"),
+    )
+    destination_column = best_matching_column(
+        data,
+        [
+            column
+            for column in columns
+            if column != terminal_column
+        ],
+        (
+            "destination",
+            "debark",
+            "arrival",
+            "location",
+            "duty station",
+            "port",
+            "to",
+        ),
+        ("origin", "start", "from"),
+    )
+    origin_column = best_matching_column(
+        data,
+        [
+            column
+            for column in columns
+            if column not in {terminal_column, destination_column}
+        ],
+        (
+            "origin",
+            "departure port",
+            "embark",
+            "start",
+            "from",
+            "leave",
+        ),
+        ("destination", "arrival", "location"),
+    )
+    delay_column = best_matching_column(
+        data,
+        numeric_candidates,
+        (
+            "delay",
+            "late",
+            "lag",
+            "variance",
+            "lead time",
+            "leadtime",
+        ),
+    )
+
+    return {
+        "name": detect_name_column(data),
+        "expected_date": expected_date,
+        "actual_date": actual_date,
+        "expected_count": expected_count,
+        "actual_count": actual_count,
+        "status": status_column,
+        "terminal": terminal_column,
+        "destination": destination_column,
+        "origin": origin_column,
+        "delay": delay_column,
+    }
+
+
+def completed_travel_mask(status_series):
+    if status_series is None:
+        return pd.Series(dtype=bool)
+
+    labels = clean_label(status_series).str.lower()
+    return labels.str.contains(
+        r"completed|complete|executed|arrived|on location|closed|done",
+        regex=True,
+    )
+
+
+def variance_days(expected_dates, actual_dates):
+    return (
+        actual_dates - expected_dates
+    ).dt.total_seconds() / 86400
+
+
+def estimated_delay_days(data, schema):
+    explicit_delay = schema["delay"]
+
+    if explicit_delay and explicit_delay in data.columns:
+        return pd.to_numeric(data[explicit_delay], errors="coerce"), False
+
+    if schema["expected_date"] and schema["actual_date"]:
+        return variance_days(
+            parse_dates(data[schema["expected_date"]], schema["expected_date"]),
+            parse_dates(data[schema["actual_date"]], schema["actual_date"]),
+        ), True
+
+    return pd.Series(np.nan, index=data.index), False
+
+
+@st.cache_data(show_spinner=False)
+def expected_travel_analysis(
+    data,
+    numeric,
+    dates,
+    categorical,
+    text,
+):
+    context = maritime_context(data)
+    schema = travel_schema(data, numeric, dates, categorical, text)
+
+    if not context["travel"]:
+        return {"available": False, "schema": schema}
+
+    name_column = schema["name"]
+    status_mask = (
+        completed_travel_mask(data[schema["status"]])
+        if schema["status"] in data.columns
+        else pd.Series(False, index=data.index)
+    )
+    delay_days, delay_is_estimated = estimated_delay_days(data, schema)
+
+    expected_date_column = schema["expected_date"]
+    actual_date_column = schema["actual_date"]
+    today = now_timestamp().normalize()
+
+    rows = pd.DataFrame(index=data.index)
+    rows["Name"] = (
+        clean_label(data[name_column])
+        if name_column in data.columns
+        else pd.Series("", index=data.index)
+    )
+    rows["Expected date"] = (
+        parse_dates(data[expected_date_column], expected_date_column)
+        if expected_date_column in data.columns
+        else pd.Series(pd.NaT, index=data.index)
+    )
+    rows["Actual date"] = (
+        parse_dates(data[actual_date_column], actual_date_column)
+        if actual_date_column in data.columns
+        else pd.Series(pd.NaT, index=data.index)
+    )
+    rows["Delay days"] = delay_days
+    rows["Completed"] = rows["Actual date"].notna() | status_mask
+
+    has_date_view = rows["Expected date"].notna().any()
+    has_count_view = (
+        schema["expected_count"] in data.columns
+        and schema["actual_count"] in data.columns
+    )
+
+    if not has_date_view and not has_count_view:
+        return {
+            "available": False,
+            "schema": schema,
+            "delay_is_estimated": delay_is_estimated,
+        }
+
+    pending = rows["Expected date"].notna() & ~rows["Completed"]
+    overdue = pending & (rows["Expected date"] < today)
+    upcoming_masks = {
+        days: pending
+        & rows["Expected date"].between(
+            today,
+            today + pd.Timedelta(days=days),
+            inclusive="both",
+        )
+        for days in (7, 14, 30)
+    }
+    completed_with_dates = rows[
+        rows["Expected date"].notna() & rows["Actual date"].notna()
+    ].copy()
+    completed_with_dates["Variance days"] = variance_days(
+        completed_with_dates["Expected date"],
+        completed_with_dates["Actual date"],
+    )
+    if delay_is_estimated and len(completed_with_dates):
+        bounded = completed_with_dates[
+            completed_with_dates["Variance days"].abs() <= 45
+        ]
+        if len(bounded):
+            completed_with_dates = bounded
+
+    count_summary = None
+    if has_count_view:
+        expected_values = pd.to_numeric(
+            data[schema["expected_count"]],
+            errors="coerce",
+        )
+        actual_values = pd.to_numeric(
+            data[schema["actual_count"]],
+            errors="coerce",
+        )
+        count_summary = {
+            "expected_total": float(expected_values.sum(skipna=True)),
+            "actual_total": float(actual_values.sum(skipna=True)),
+            "variance_total": float(
+                (actual_values - expected_values).sum(skipna=True)
+            ),
+        }
+
+    soonest_upcoming = rows[pending].sort_values("Expected date").head(5)
+    overdue_rows = rows[overdue].sort_values("Expected date")
+
+    return {
+        "available": True,
+        "schema": schema,
+        "delay_is_estimated": delay_is_estimated,
+        "delay_days": delay_days,
+        "completed_count": int(rows["Completed"].sum()),
+        "upcoming_counts": {
+            days: int(mask.sum())
+            for days, mask in upcoming_masks.items()
+        },
+        "overdue_count": int(overdue.sum()),
+        "overdue_names": preview_names(
+            overdue_rows["Name"] if "Name" in overdue_rows else []
+        ),
+        "upcoming_names": preview_names(
+            soonest_upcoming["Name"] if "Name" in soonest_upcoming else []
+        ),
+        "soonest_upcoming": soonest_upcoming,
+        "overdue_rows": overdue_rows,
+        "completed_with_dates": completed_with_dates,
+        "on_time_rate": (
+            float(
+                (
+                    completed_with_dates["Variance days"] <= 0
+                ).mean()
+            )
+            if len(completed_with_dates)
+            else np.nan
+        ),
+        "average_variance_days": (
+            float(completed_with_dates["Variance days"].mean())
+            if len(completed_with_dates)
+            else np.nan
+        ),
+        "average_positive_delay_days": (
+            float(
+                completed_with_dates.loc[
+                    completed_with_dates["Variance days"] > 0,
+                    "Variance days",
+                ].mean()
+            )
+            if (completed_with_dates["Variance days"] > 0).any()
+            else np.nan
+        ),
+        "max_delay_days": (
+            float(completed_with_dates["Variance days"].max())
+            if len(completed_with_dates)
+            else np.nan
+        ),
+        "count_summary": count_summary,
+        "rows": rows,
+    }
+
+
+def terminal_name(value):
+    if pd.isna(value):
+        return None
+
+    text = str(value).strip()
+    if not text or text.lower() == "missing":
+        return None
+
+    normalized = text.lower()
+    for label, aliases in KNOWN_TERMINALS.items():
+        if any(alias in normalized for alias in aliases):
+            return label
+
+    return text.title() if text.isupper() else text
+
+
+@st.cache_data(show_spinner=False)
+def terminal_snapshot(data, numeric, dates, categorical, text):
+    summary = expected_travel_analysis(
+        data,
+        tuple(numeric),
+        tuple(dates),
+        tuple(categorical),
+        tuple(text),
+    )
+    schema = summary.get("schema", {})
+    terminal_columns = [
+        column
+        for column in (
+            schema.get("terminal"),
+            schema.get("origin"),
+            schema.get("destination"),
+        )
+        if column in data.columns
+    ]
+
+    if not terminal_columns:
+        return {"available": False, "schema": schema}
+
+    delay_days = summary.get(
+        "delay_days",
+        pd.Series(np.nan, index=data.index),
+    )
+    date_candidates = [
+        column
+        for column in (
+            schema.get("actual_date"),
+            schema.get("expected_date"),
+            *dates,
+        )
+        if column in data.columns
+    ]
+    if not date_candidates:
+        return {"available": False, "schema": schema}
+
+    latest_dates = pd.concat(
+        [
+            parse_dates(data[column], column).rename(column)
+            for column in dict.fromkeys(date_candidates)
+        ],
+        axis=1,
+    ).max(axis=1)
+    name_column = schema.get("name")
+    records = []
+
+    for index in data.index:
+        seen = set()
+        terminals = []
+        for column in terminal_columns:
+            label = terminal_name(data.at[index, column])
+            if label and label not in seen:
+                seen.add(label)
+                terminals.append(label)
+
+        if not terminals:
+            continue
+
+        for terminal in terminals:
+            records.append(
+                {
+                    "Terminal": terminal,
+                    "Movement date": latest_dates.at[index],
+                    "Delay days": delay_days.at[index],
+                    "Traveler": (
+                        clean_label(data[name_column]).at[index]
+                        if name_column in data.columns
+                        else ""
+                    ),
+                }
+            )
+
+    if not records:
+        return {"available": False, "schema": schema}
+
+    terminal_rows = pd.DataFrame(records)
+    summary_frame = (
+        terminal_rows.groupby("Terminal", as_index=False)
+        .agg(
+            movements=("Terminal", "size"),
+            latest_movement=("Movement date", "max"),
+            average_delay_days=("Delay days", "mean"),
+            max_delay_days=("Delay days", "max"),
+            travelers=("Traveler", preview_names),
+        )
+        .sort_values(
+            ["average_delay_days", "movements"],
+            ascending=[False, False],
+            na_position="last",
+        )
+    )
+    summary_frame["latest_movement_label"] = summary_frame[
+        "latest_movement"
+    ].apply(
+        lambda value: (
+            value.strftime("%Y-%m-%d %H:%M")
+            if pd.notna(value)
+            else "No date detected"
+        )
+    )
+
+    return {
+        "available": bool(len(summary_frame)),
+        "schema": schema,
+        "rows": terminal_rows,
+        "summary": summary_frame,
+        "delay_is_estimated": summary.get("delay_is_estimated", False),
     }
 
 
@@ -739,6 +1355,60 @@ def recommend_actions(data, numeric, dates, categorical, text):
     quality_fields = []
     terms = domain_terms(data)
     maritime_mode = terms["records"] != "records"
+    travel_summary = expected_travel_analysis(
+        data,
+        tuple(numeric),
+        tuple(dates),
+        tuple(categorical),
+        tuple(text),
+    )
+    name_column = travel_summary.get("schema", {}).get("name")
+
+    if travel_summary.get("available"):
+        completed = travel_summary.get("completed_with_dates", pd.DataFrame())
+        delay_signal = abs(travel_summary.get("average_variance_days", 0) or 0)
+        overdue_signal = travel_summary.get("overdue_count", 0) / max(row_count, 1)
+        signal_strength = max(delay_signal / 7, overdue_signal)
+        missingness = 1 - (
+            len(completed) / max(row_count, 1)
+        ) if len(completed) else .4
+        confidence = confidence_label(
+            max(len(completed), travel_summary["overdue_count"]),
+            missingness,
+            signal_strength,
+        )
+        overdue_names = travel_summary.get("overdue_names")
+
+        if travel_summary["overdue_count"] or not pd.isna(travel_summary["on_time_rate"]):
+            recommendations.append(
+                recommendation_record(
+                    "CIVMAR travel variance needs attention",
+                    (
+                        f"{travel_summary['overdue_count']:,} travelers are expected but not completed yet"
+                        + (
+                            f" ({overdue_names})"
+                            if overdue_names
+                            else ""
+                        )
+                        + (
+                            f", and current on-time execution is {travel_summary['on_time_rate']:.1%}."
+                            if not pd.isna(travel_summary["on_time_rate"])
+                            else "."
+                        )
+                    ),
+                    (
+                        "Work the overdue TDY queue first, confirm travelers expected in the next 14 days, "
+                        "and reconcile expected travel dates against actual movement updates before the backlog grows."
+                    ),
+                    confidence,
+                    evidence=(
+                        f"Upcoming travel: {travel_summary['upcoming_counts'][7]} in 7 days, "
+                        f"{travel_summary['upcoming_counts'][14]} in 14 days, "
+                        f"{travel_summary['upcoming_counts'][30]} in 30 days."
+                    ),
+                    priority=signal_strength + overdue_signal,
+                )
+            )
 
     category = best_category(data, categorical)
     if category and category in data:
@@ -762,7 +1432,11 @@ def recommend_actions(data, numeric, dates, categorical, text):
                 )
                 recommendations.append(
                     recommendation_record(
-                        "Concentration warrants segment planning",
+                        (
+                            "Travel concentration warrants segment planning"
+                            if travel_summary.get("available")
+                            else "Concentration warrants segment planning"
+                        ),
                         (
                             f"`{safe_top_label}` accounts for {top_share:.1%} of the current "
                             f"`{safe_category}` volume, which suggests {terms['focus']} is concentrated "
@@ -776,6 +1450,17 @@ def recommend_actions(data, numeric, dates, categorical, text):
                         confidence,
                         evidence=(
                             f"{top_count:,} of {row_count:,} {terms['records']} fall into `{safe_top_label}`."
+                            + (
+                                f" Key names: {preview_names(data.loc[clean_label(data[category]) == top_label, name_column])}."
+                                if name_column in data.columns
+                                and preview_names(
+                                    data.loc[
+                                        clean_label(data[category]) == top_label,
+                                        name_column,
+                                    ]
+                                )
+                                else ""
+                            )
                         ),
                         priority=signal_strength,
                     )
@@ -892,7 +1577,11 @@ def recommend_actions(data, numeric, dates, categorical, text):
                 )
                 recommendations.append(
                     recommendation_record(
-                        "Operational gap needs coverage planning",
+                        (
+                            "TDY backlog needs travel coverage planning"
+                            if travel_summary.get("available")
+                            else "Operational gap needs coverage planning"
+                        ),
                         (
                             f"Average `{safe_workload_column}` exceeds `{safe_staffing_column}` by "
                             f"{mean_gap:.1f}{readiness_clause}, indicating "
@@ -1088,10 +1777,20 @@ def recommend_actions(data, numeric, dates, categorical, text):
         )
         recommendations.append(
             recommendation_record(
-                "No strong recommendation signal yet",
-                "This filtered slice does not show a stable concentration, operating gap, or directional trend large enough to justify a stronger action call.",
                 (
-                    "Use the chart and filter controls to inspect smaller cohorts or narrower time windows for localized predictive signals before changing operations."
+                    "No strong travel action signal yet"
+                    if travel_summary.get("available")
+                    else "No strong recommendation signal yet"
+                ),
+                (
+                    "This filtered slice does not show a stable travel readiness gap, expected-vs-actual variance, or directional trend large enough to justify a stronger action call."
+                    if travel_summary.get("available")
+                    else "This filtered slice does not show a stable concentration, operating gap, or directional trend large enough to justify a stronger action call."
+                ),
+                (
+                    "Use the chart and filter controls to inspect smaller traveler cohorts, terminal groupings, or narrower time windows before changing travel operations."
+                    if travel_summary.get("available")
+                    else "Use the chart and filter controls to inspect smaller cohorts or narrower time windows for localized predictive signals before changing operations."
                     if maritime_mode
                     else "Use the chart and filter controls to inspect smaller cohorts or narrower time windows for localized predictive signals before changing operations."
                 ),
@@ -1137,6 +1836,27 @@ def cached_recommend_actions(
     )
 
 
+def grouped_name_preview(data, group_column, name_column, label="Travelers"):
+    if name_column not in data.columns:
+        return pd.DataFrame(columns=[group_column, label])
+
+    return (
+        data.assign(_group=clean_label(data[group_column]))
+        .groupby("_group", as_index=False)[name_column]
+        .agg(preview_names)
+        .rename(columns={"_group": group_column, name_column: label})
+    )
+
+
+def add_chart_hover_names(frame, data, name_column, label="Traveler"):
+    if name_column not in data.columns or len(frame) != len(data):
+        return frame
+
+    enriched = frame.copy()
+    enriched[label] = clean_label(data[name_column]).values
+    return enriched
+
+
 def chart_for(
     data,
     numeric,
@@ -1148,6 +1868,22 @@ def chart_for(
 ):
     numeric_cache = {}
     date_cache = {}
+    travel_summary = expected_travel_analysis(
+        data,
+        tuple(numeric),
+        tuple(dates),
+        tuple(categorical),
+        tuple([]),
+    )
+    terminal_data = terminal_snapshot(
+        data,
+        tuple(numeric),
+        tuple(dates),
+        tuple(categorical),
+        tuple([]),
+    )
+    schema = travel_summary.get("schema", {})
+    name_column = schema.get("name")
 
     def numeric_values(column):
         if column not in numeric_cache:
@@ -1265,26 +2001,224 @@ def chart_for(
             "Auto view was unavailable for this schema."
         )
 
-    if chart_type == "Bar" and category:
-        counts = (
-            clean_label(data[category])
-            .value_counts()
-            .head(12)
-            .sort_values()
+    if chart_type == "TravelStatus":
+        travel_category = (
+            best_matching_column(
+                data,
+                [
+                    column
+                    for column in categorical + dates + [schema.get("destination")]
+                    if column in data.columns
+                ],
+                (
+                    "status",
+                    "type",
+                    "destination",
+                    "location",
+                    "terminal",
+                    "port",
+                ),
+            )
+            or category
         )
 
-        if len(counts):
+        if travel_category:
+            frame = (
+                data.assign(**{travel_category: clean_label(data[travel_category])})
+                .groupby(travel_category, as_index=False)
+                .size()
+                .rename(columns={"size": "Count"})
+                .sort_values("Count", ascending=False)
+                .head(12)
+            )
+            if name_column in data.columns:
+                frame = frame.merge(
+                    grouped_name_preview(data, travel_category, name_column),
+                    how="left",
+                    on=travel_category,
+                )
+
             return (
                 px.bar(
-                    counts,
-                    x=counts.values,
-                    y=counts.index,
+                    frame.sort_values("Count"),
+                    x="Count",
+                    y=travel_category,
+                    orientation="h",
+                    title=f"Travel composition by {travel_category}",
+                    color_discrete_sequence=["#a855f7"],
+                    hover_data=(
+                        {"Travelers": True}
+                        if "Travelers" in frame
+                        else None
+                    ),
+                ),
+                f"Travel status and composition across `{travel_category}`.",
+                [travel_category, *([name_column] if name_column else [])],
+            )
+
+    if chart_type == "ExpectedActualTimeline" and travel_summary.get("available"):
+        schema_expected = schema.get("expected_date")
+        schema_actual = schema.get("actual_date")
+
+        if schema_expected and schema_actual:
+            expected = pd.DataFrame(
+                {
+                    "Date": parsed_dates(schema_expected).dropna(),
+                }
+            )
+            actual = pd.DataFrame(
+                {
+                    "Date": parsed_dates(schema_actual).dropna(),
+                }
+            )
+
+            frames = []
+            if len(expected):
+                expected["Series"] = "Expected travel"
+                frames.append(expected)
+            if len(actual):
+                actual["Series"] = "Actual travel"
+                frames.append(actual)
+
+            if frames:
+                timeline = pd.concat(frames, ignore_index=True)
+                timeline["Date"] = timeline["Date"].dt.normalize()
+                timeline = (
+                    timeline.groupby(["Date", "Series"], as_index=False)
+                    .size()
+                    .rename(columns={"size": "Movements"})
+                    .sort_values("Date")
+                )
+                return (
+                    px.line(
+                        timeline,
+                        x="Date",
+                        y="Movements",
+                        color="Series",
+                        markers=True,
+                        title="Expected vs actual travel timeline",
+                        color_discrete_sequence=["#06b6d4", "#ec4899"],
+                    ),
+                    "Expected vs actual travel volume over time.",
+                    [schema_expected, schema_actual],
+                )
+
+    if chart_type == "TravelDelay" and travel_summary.get("available"):
+        completed = travel_summary.get("completed_with_dates", pd.DataFrame())
+        if len(completed):
+            delay_frame = completed[["Variance days"]].rename(
+                columns={"Variance days": "Delay days"}
+            )
+            if "Name" in completed:
+                delay_frame["Name"] = completed["Name"]
+            return (
+                px.histogram(
+                    delay_frame,
+                    x="Delay days",
+                    nbins=20,
+                    title=(
+                        "Estimated travel delay distribution"
+                        if travel_summary.get("delay_is_estimated")
+                        else "Travel delay distribution"
+                    ),
+                    color_discrete_sequence=["#06b6d4"],
+                    hover_data=(
+                        {"Name": True}
+                        if "Name" in delay_frame
+                        else None
+                    ),
+                ),
+                (
+                    "Delay distribution estimated from expected and actual dates."
+                    if travel_summary.get("delay_is_estimated")
+                    else "Delay distribution using available travel delay fields."
+                ),
+                [
+                    column
+                    for column in (
+                        schema.get("expected_date"),
+                        schema.get("actual_date"),
+                        schema.get("delay"),
+                        name_column,
+                    )
+                    if column
+                ],
+            )
+
+    if chart_type == "TerminalBreakdown" and terminal_data.get("available"):
+        frame = terminal_data["summary"].copy()
+        y_column_name = (
+            "average_delay_days"
+            if frame["average_delay_days"].notna().any()
+            else "movements"
+        )
+        chart = px.bar(
+            frame.sort_values(y_column_name),
+            x=y_column_name,
+            y="Terminal",
+            orientation="h",
+            title=(
+                "Average delay by terminal"
+                if y_column_name == "average_delay_days"
+                else "Movements by terminal"
+            ),
+            color_discrete_sequence=["#ec4899"],
+            hover_data={
+                "latest_movement_label": True,
+                "travelers": True,
+                "movements": True,
+                "average_delay_days": ":.1f",
+                "max_delay_days": ":.1f",
+            },
+        )
+        return (
+            chart,
+            "Terminal summary across known and detected travel hubs.",
+            [
+                column
+                for column in (
+                    schema.get("terminal"),
+                    schema.get("origin"),
+                    schema.get("destination"),
+                    name_column,
+                )
+                if column
+            ],
+        )
+
+    if chart_type == "Bar" and category:
+        frame = (
+            data.assign(**{category: clean_label(data[category])})
+            .groupby(category, as_index=False)
+            .size()
+            .rename(columns={"size": "Count"})
+            .sort_values("Count", ascending=False)
+            .head(12)
+        )
+
+        if len(frame):
+            if name_column in data.columns:
+                frame = frame.merge(
+                    grouped_name_preview(data, category, name_column),
+                    how="left",
+                    on=category,
+                )
+            return (
+                px.bar(
+                    frame.sort_values("Count"),
+                    x="Count",
+                    y=category,
                     orientation="h",
                     title=f"Composition by {category}",
                     color_discrete_sequence=["#a855f7"],
+                    hover_data=(
+                        {"Travelers": True}
+                        if "Travelers" in frame
+                        else None
+                    ),
                 ),
                 f"Top segments in {category}",
-                [category],
+                [category, *([name_column] if name_column else [])],
             )
 
     if chart_type == "Line" and dates and metric:
@@ -1312,6 +2246,20 @@ def chart_for(
                 .sort_values("Date")
             )
             chart_frame = trend if len(trend) >= 3 else daily
+            if name_column in data.columns:
+                name_frame = (
+                    data.assign(Date=parsed_dates(date_column))
+                    .dropna(subset=["Date"])
+                    .assign(Date=lambda frame: frame["Date"].dt.normalize())
+                    .groupby("Date", as_index=False)[name_column]
+                    .agg(preview_names)
+                    .rename(columns={name_column: "Travelers"})
+                )
+                chart_frame = chart_frame.merge(
+                    name_frame,
+                    how="left",
+                    on="Date",
+                )
 
             return (
                 px.line(
@@ -1321,9 +2269,14 @@ def chart_for(
                     markers=True,
                     title=f"{metric} over {date_column}",
                     color_discrete_sequence=["#06b6d4"],
+                    hover_data=(
+                        {"Travelers": True}
+                        if "Travelers" in chart_frame
+                        else None
+                    ),
                 ),
                 "Time trend from one date and one numeric field",
-                [date_column, metric],
+                [date_column, metric, *([name_column] if name_column else [])],
             )
 
     if chart_type == "Scatter" and len(numeric) >= 2:
@@ -1382,6 +2335,8 @@ def chart_for(
                 y: pd.to_numeric(data[y], errors="coerce"),
             }
         ).dropna()
+        if name_column in data.columns:
+            frame["Traveler"] = clean_label(data.loc[frame.index, name_column])
 
         if len(frame):
             return (
@@ -1391,9 +2346,14 @@ def chart_for(
                     y=y,
                     title=f"{x} vs {y}",
                     color_discrete_sequence=["#ec4899"],
+                    hover_data=(
+                        {"Traveler": True}
+                        if "Traveler" in frame
+                        else None
+                    ),
                 ),
                 "Relationship between two numeric fields",
-                [x, y],
+                [x, y, *([name_column] if name_column else [])],
             )
 
     if chart_type == "Box" and metric and category:
@@ -1403,6 +2363,8 @@ def chart_for(
                 metric: numeric_values(metric),
             }
         ).dropna()
+        if name_column in data.columns:
+            frame["Traveler"] = clean_label(data.loc[frame.index, name_column])
 
         if len(frame):
             category_order = (
@@ -1421,9 +2383,14 @@ def chart_for(
                         y=metric,
                         title=f"{metric} variation by {category}",
                         color_discrete_sequence=["#ec4899"],
+                        hover_data=(
+                            {"Traveler": True}
+                            if "Traveler" in frame
+                            else None
+                        ),
                     ),
                     "Distribution spread by category",
-                    [category, metric],
+                    [category, metric, *([name_column] if name_column else [])],
                 )
 
     if chart_type == "CountTimeline" and dates:
@@ -1451,6 +2418,15 @@ def chart_for(
                 .sort_values("Date")
             )
             if len(trend):
+                if name_column in data.columns:
+                    name_frame = (
+                        data.assign(Date=parsed_dates(date_column))
+                        .dropna(subset=["Date"])
+                        .groupby("Date", as_index=False)[name_column]
+                        .agg(preview_names)
+                        .rename(columns={name_column: "Travelers"})
+                    )
+                    trend = trend.merge(name_frame, how="left", on="Date")
                 return (
                     px.line(
                         trend,
@@ -1459,9 +2435,14 @@ def chart_for(
                         markers=True,
                         title=f"Record volume over {date_column}",
                         color_discrete_sequence=["#06b6d4"],
+                        hover_data=(
+                            {"Travelers": True}
+                            if "Travelers" in trend
+                            else None
+                        ),
                     ),
                     "Record-volume trend across the detected time field",
-                    [date_column],
+                    [date_column, *([name_column] if name_column else [])],
                 )
 
     if chart_type == "Histogram" and metric:
@@ -1469,6 +2450,8 @@ def chart_for(
 
         if len(metric_values):
             frame = pd.DataFrame({metric: metric_values})
+            if name_column in data.columns:
+                frame["Traveler"] = clean_label(data.loc[metric_values.index, name_column])
             return (
                 px.histogram(
                     frame,
@@ -1476,9 +2459,14 @@ def chart_for(
                     nbins=20,
                     title=f"Distribution of {metric}",
                     color_discrete_sequence=["#06b6d4"],
+                    hover_data=(
+                        {"Traveler": True}
+                        if "Traveler" in frame
+                        else None
+                    ),
                 ),
                 f"Distribution of {metric}",
-                [metric],
+                [metric, *([name_column] if name_column else [])],
             )
 
     if chart_type == "Signal":
@@ -1520,6 +2508,20 @@ def charts_for(data, numeric, dates, categorical):
     charts = []
     fallback_signatures = set()
     preferred_numeric = None
+    travel_summary = expected_travel_analysis(
+        data,
+        tuple(numeric),
+        tuple(dates),
+        tuple(categorical),
+        tuple([]),
+    )
+    terminal_data = terminal_snapshot(
+        data,
+        tuple(numeric),
+        tuple(dates),
+        tuple(categorical),
+        tuple([]),
+    )
 
     choices = [
         ["Bar", "Histogram", "Count"],
@@ -1527,6 +2529,19 @@ def charts_for(data, numeric, dates, categorical):
         ["Scatter", "Box", "Bar", "Count"],
         ["Histogram", "Box", "Bar", "Count"],
     ]
+
+    if maritime_context(data)["travel"]:
+        choices = [
+            ["TravelStatus", "Bar", "Count"],
+            ["ExpectedActualTimeline", "Line", "CountTimeline", "Count"],
+            ["TravelDelay", "Histogram", "Box", "Count"],
+            ["TerminalBreakdown", "Bar", "Count"],
+        ]
+        if not travel_summary.get("available"):
+            choices[1] = ["Line", "CountTimeline", "Bar", "Count"]
+            choices[2] = ["Histogram", "Box", "Bar", "Count"]
+        if not terminal_data.get("available"):
+            choices[3] = ["Bar", "Histogram", "Count"]
 
     if numeric:
         metric_candidates = []
@@ -1608,6 +2623,13 @@ def charts_for(data, numeric, dates, categorical):
         )
 
     def default_axes(kind):
+        if kind in {
+            "TravelStatus",
+            "ExpectedActualTimeline",
+            "TravelDelay",
+            "TerminalBreakdown",
+        }:
+            return None, None
         if kind in {"Line", "CountTimeline"}:
             return dates[0] if dates else None, preferred_numeric
         if kind == "Scatter":
@@ -1841,15 +2863,57 @@ def build_custom_chart(
 def insights(data, numeric, dates, categorical, text):
     findings = []
     terms = domain_terms(data)
+    travel_summary = expected_travel_analysis(
+        data,
+        tuple(numeric),
+        tuple(dates),
+        tuple(categorical),
+        tuple(text),
+    )
+    name_column = travel_summary.get("schema", {}).get("name")
 
     if categorical:
         category = best_category(data, categorical)
         counts = clean_label(data[category]).value_counts()
 
         if len(counts):
+            leading_names = ""
+            if name_column in data.columns:
+                leading_names = preview_names(
+                    data.loc[
+                        clean_label(data[category]) == counts.index[0],
+                        name_column,
+                    ]
+                )
             findings.append(
-                f"**{counts.index[0]}** is the largest `{category}` {terms['segment']} "
-                f"at **{counts.iloc[0] / len(data):.1%}** of {terms['records']}."
+                f"**{escape_markdown(counts.index[0])}** is the largest "
+                f"`{escape_markdown(category)}` {terms['segment']} at "
+                f"**{counts.iloc[0] / len(data):.1%}** of {terms['records']}"
+                + (
+                    f", led by {escape_markdown(leading_names)}."
+                    if leading_names
+                    else "."
+                )
+            )
+
+    if travel_summary.get("available"):
+        overdue_names = travel_summary.get("overdue_names")
+        findings.append(
+            "CIVMAR travel readiness shows "
+            f"**{travel_summary['upcoming_counts'][14]}** travelers expected in the "
+            "next 14 days and "
+            f"**{travel_summary['overdue_count']}** overdue expected movements"
+            + (
+                f" ({escape_markdown(overdue_names)})."
+                if overdue_names
+                else "."
+            )
+        )
+        if not pd.isna(travel_summary.get("on_time_rate", np.nan)):
+            findings.append(
+                "Expected travel vs actual travel is running at "
+                f"**{travel_summary['on_time_rate']:.1%}** on time with "
+                f"**{travel_summary['average_variance_days']:.1f} days** average variance."
             )
 
     if dates:
@@ -1857,7 +2921,7 @@ def insights(data, numeric, dates, categorical, text):
 
         if len(parsed):
             findings.append(
-                f"`{dates[0]}` spans "
+                f"`{escape_markdown(dates[0])}` spans "
                 f"**{parsed.min():%Y-%m-%d} to {parsed.max():%Y-%m-%d}**."
             )
 
@@ -1866,7 +2930,7 @@ def insights(data, numeric, dates, categorical, text):
     if len(field_signal):
         findings.append(
             f"Prediction readiness is **{profile['readiness_score']:.0%}**, led by "
-            f"**{field_signal.index[0]}** as the strongest feature signal."
+            f"**{escape_markdown(field_signal.index[0])}** as the strongest feature signal."
         )
 
     return (
@@ -1913,6 +2977,20 @@ def local_answer(question, data, numeric, dates, categorical, text):
     q = question.lower().strip()
     category = best_category(data, categorical)
     terms = domain_terms(data)
+    travel_summary = expected_travel_analysis(
+        data,
+        tuple(numeric),
+        tuple(dates),
+        tuple(categorical),
+        tuple(text),
+    )
+    terminal_data = terminal_snapshot(
+        data,
+        tuple(numeric),
+        tuple(dates),
+        tuple(categorical),
+        tuple(text),
+    )
 
     if data.empty:
         return (
@@ -1923,6 +3001,74 @@ def local_answer(question, data, numeric, dates, categorical, text):
                 else "summarize or recommend yet."
             )
         )
+
+    if travel_summary.get("available"):
+        if "on-time" in q or "on time" in q or "expected travel" in q:
+            if not pd.isna(travel_summary.get("on_time_rate", np.nan)):
+                return (
+                    f"Travel is {travel_summary['on_time_rate']:.1%} on time with "
+                    f"{travel_summary['average_variance_days']:.1f} days average variance"
+                    + (
+                        " (estimated from expected and actual dates)."
+                        if travel_summary.get("delay_is_estimated")
+                        else "."
+                    )
+                )
+
+        if "upcoming travel" in q or "who has upcoming travel" in q:
+            soonest = travel_summary.get("soonest_upcoming", pd.DataFrame())
+            if len(soonest):
+                lines = []
+                for _, row in soonest.head(5).iterrows():
+                    name = row["Name"] or "Unnamed traveler"
+                    lines.append(
+                        f"{name} — expected {row['Expected date']:%Y-%m-%d}"
+                    )
+                return (
+                    f"{travel_summary['upcoming_counts'][7]} travelers are expected in the next 7 days "
+                    f"and {travel_summary['upcoming_counts'][30]} in the next 30 days. "
+                    + "Soonest upcoming travel: "
+                    + "; ".join(lines)
+                    + "."
+                )
+            return "No upcoming expected travel was detected from the current filtered data."
+
+        if "overdue" in q and "travel" in q:
+            overdue = travel_summary.get("overdue_rows", pd.DataFrame())
+            if len(overdue):
+                lines = []
+                for _, row in overdue.head(5).iterrows():
+                    name = row["Name"] or "Unnamed traveler"
+                    lines.append(
+                        f"{name} — expected {row['Expected date']:%Y-%m-%d}"
+                    )
+                return (
+                    f"{travel_summary['overdue_count']} travelers have expected travel overdue: "
+                    + "; ".join(lines)
+                    + "."
+                )
+            return "No overdue expected travel is visible in the current filtered data."
+
+        if "delay" in q and terminal_data.get("available"):
+            for terminal in terminal_data["summary"]["Terminal"]:
+                if terminal.split(",")[0].lower() in q:
+                    record = terminal_data["summary"].loc[
+                        terminal_data["summary"]["Terminal"] == terminal
+                    ].iloc[0]
+                    delay_text = (
+                        f"average delay {record['average_delay_days']:.1f} days and max delay {record['max_delay_days']:.1f} days"
+                        if pd.notna(record["average_delay_days"])
+                        else f"{int(record['movements'])} tracked movements with no delay field available"
+                    )
+                    estimate_label = (
+                        " using estimated date variance"
+                        if terminal_data.get("delay_is_estimated")
+                        else ""
+                    )
+                    return (
+                        f"{terminal} shows {delay_text}{estimate_label}. "
+                        f"Latest movement is {record['latest_movement_label']}."
+                    )
 
     if any(word in q for word in ("chart", "graph", "visual", "plot")):
         if "line" in q or "trend" in q:
@@ -1991,9 +3137,14 @@ def local_answer(question, data, numeric, dates, categorical, text):
         )
 
     if "how many" in q or "rows" in q or "records" in q:
+        traveler_clause = ""
+        name_column = travel_summary.get("schema", {}).get("name")
+        if name_column in data.columns:
+            traveler_count = clean_label(data[name_column]).nunique(dropna=True)
+            traveler_clause = f" covering {traveler_count:,} named travelers"
         return (
             f"The current filtered dataset contains {len(data):,} {terms['records']} "
-            f"across {len(data.columns):,} fields."
+            f"across {len(data.columns):,} fields{traveler_clause}."
         )
 
     if "date" in q or "time" in q:
@@ -2008,11 +3159,25 @@ def local_answer(question, data, numeric, dates, categorical, text):
         or "category" in q
     ):
         counts = clean_label(data[category]).value_counts()
+        leading_names = ""
+        name_column = travel_summary.get("schema", {}).get("name")
+        if name_column in data.columns:
+            leading_names = preview_names(
+                data.loc[
+                    clean_label(data[category]) == counts.index[0],
+                    name_column,
+                ]
+            )
 
         return (
             f"The largest {category} {terms['segment']} is {counts.index[0]} with "
             f"{counts.iloc[0]:,} {terms['records']} "
-            f"({counts.iloc[0] / len(data):.1%})."
+            f"({counts.iloc[0] / len(data):.1%})"
+            + (
+                f", including {leading_names}."
+                if leading_names
+                else "."
+            )
         )
 
     if numeric:
@@ -2056,12 +3221,26 @@ with st.sidebar:
 
 uploaded_data, errors = load_uploads(uploads)
 analysis_data = uploaded_data
+initial_context = (
+    maritime_context(analysis_data)
+    if not analysis_data.empty
+    else {"travel": False}
+)
 
-st.title("🔮 SMOM | Adaptive Insight Dashboard")
+st.title(
+    "🔮 SMOM | CIVMAR Travel Insight Dashboard"
+    if initial_context["travel"]
+    else "🔮 SMOM | Adaptive Insight Dashboard"
+)
 
 st.caption(
-    "Upload your data to generate a local-only, adaptive four-chart overview "
-    "plus assistant guidance based on the active filtered dataset."
+    (
+        "Upload travel tracking data to generate a local-only CIVMAR travel readiness view "
+        "with expected-vs-actual highlights, terminal snapshots, and assistant guidance."
+        if initial_context["travel"]
+        else "Upload your data to generate a local-only, adaptive four-chart overview "
+        "plus assistant guidance based on the active filtered dataset."
+    )
 )
 
 for error in errors:
@@ -2110,11 +3289,24 @@ for column, values in selected.items():
             clean_label(filtered[column]).isin(values)
         ]
 
-st.success(
+status_name_column = detect_name_column(filtered)
+status_named_travelers = (
+    clean_label(filtered[status_name_column])
+    .replace({"Missing": np.nan})
+    .dropna()
+    .nunique()
+    if status_name_column in filtered.columns
+    else None
+)
+status_message = (
     f"Analyzing {len(uploads)} file(s), "
     f"{len(filtered):,} filtered rows, and "
     f"{len(filtered.columns):,} fields."
 )
+if initial_context["travel"] and status_named_travelers:
+    status_message += f" Detected {status_named_travelers:,} named travelers."
+
+st.success(status_message)
 
 readiness_profile = (
     prediction_readiness_components(filtered, numeric, dates, categorical)
@@ -2135,25 +3327,73 @@ recommendations = cached_recommend_actions(
     tuple(categorical),
     tuple(text),
 )
+travel_summary = expected_travel_analysis(
+    filtered,
+    tuple(numeric),
+    tuple(dates),
+    tuple(categorical),
+    tuple(text),
+)
+terminal_data = terminal_snapshot(
+    filtered,
+    tuple(numeric),
+    tuple(dates),
+    tuple(categorical),
+    tuple(text),
+)
+name_column = travel_summary.get("schema", {}).get("name")
+named_travelers = (
+    clean_label(filtered[name_column])
+    .replace({"Missing": np.nan})
+    .dropna()
+    .nunique()
+    if name_column in filtered.columns
+    else None
+)
 
 metrics = st.columns(4)
 
-metrics[0].metric("RECORDS", f"{len(filtered):,}")
+metrics[0].metric(
+    "TRAVELERS" if named_travelers and travel_summary.get("available") else "RECORDS",
+    f"{named_travelers:,}" if named_travelers and travel_summary.get("available") else f"{len(filtered):,}",
+)
 metrics[1].metric("FIELDS", f"{len(filtered.columns):,}")
 metrics[2].metric(
-    "DATE / NUMERIC SIGNALS",
-    f"{len(dates)} / {len(numeric)}",
+    (
+        "EXPECTED / ACTUAL"
+        if travel_summary.get("available")
+        else "DATE / NUMERIC SIGNALS"
+    ),
+    (
+        f"{'Yes' if travel_summary.get('schema', {}).get('expected_date') else 'No'} / "
+        f"{'Yes' if travel_summary.get('schema', {}).get('actual_date') else 'No'}"
+        if travel_summary.get("available")
+        else f"{len(dates)} / {len(numeric)}"
+    ),
 )
-metrics[3].metric("PREDICTION READINESS", f"{readiness_profile['readiness_score']:.0%}")
+metrics[3].metric(
+    (
+        "CIVMAR TRAVEL READINESS"
+        if travel_summary.get("available")
+        else "PREDICTION READINESS"
+    ),
+    f"{readiness_profile['readiness_score']:.0%}",
+)
 
 
 st.markdown(
     f"""
 <div class="insight">
 <strong>
-{"Strong predictive signal profile detected."
-if readiness_profile["readiness_score"] >= .65
-else "Signal profile is moderate; refine filters to strengthen predictions."}
+{(
+    "CIVMAR travel readiness is strong."
+    if travel_summary.get("available") and readiness_profile["readiness_score"] >= .65
+    else "Travel readiness is moderate; refine filters to tighten expected-vs-actual visibility."
+    if travel_summary.get("available")
+    else "Strong predictive signal profile detected."
+    if readiness_profile["readiness_score"] >= .65
+    else "Signal profile is moderate; refine filters to strengthen predictions."
+)}
 </strong>
 <br>
 {insights(filtered, numeric, dates, categorical, text)}
@@ -2163,7 +3403,11 @@ else "Signal profile is moderate; refine filters to strengthen predictions."}
 )
 
 
-st.subheader("Adaptive four-chart overview")
+st.subheader(
+    "Adaptive four-chart travel overview"
+    if travel_summary.get("available")
+    else "Adaptive four-chart overview"
+)
 
 with st.sidebar:
     st.subheader("Chart data options")
@@ -2295,6 +3539,124 @@ if custom_view:
         st.caption("ℹ️ Interpolated data used for this chart.")
 
 
+if travel_summary.get("available"):
+    st.subheader("Expected travel highlights")
+    st.caption(
+        "Dedicated CIVMAR travel readiness analysis built from expected, actual, and upcoming travel indicators."
+    )
+    travel_metrics = st.columns(4)
+    on_time_value = travel_summary.get("on_time_rate", np.nan)
+    avg_delay_value = travel_summary.get("average_positive_delay_days", np.nan)
+    travel_metrics[0].metric(
+        "ON-TIME RATE",
+        f"{on_time_value:.1%}" if not pd.isna(on_time_value) else "N/A",
+    )
+    travel_metrics[1].metric(
+        "AVG DELAY",
+        (
+            f"{avg_delay_value:.1f} days"
+            if not pd.isna(avg_delay_value)
+            else (
+                f"{travel_summary['average_variance_days']:.1f} days variance"
+                if not pd.isna(travel_summary.get("average_variance_days", np.nan))
+                else "N/A"
+            )
+        ),
+    )
+    travel_metrics[2].metric(
+        "UPCOMING 14 DAYS",
+        f"{travel_summary['upcoming_counts'][14]:,}",
+    )
+    travel_metrics[3].metric(
+        "OVERDUE EXPECTED",
+        f"{travel_summary['overdue_count']:,}",
+    )
+
+    soonest = travel_summary.get("soonest_upcoming", pd.DataFrame()).copy()
+    overdue_rows = travel_summary.get("overdue_rows", pd.DataFrame()).copy()
+
+    if len(soonest):
+        st.markdown(
+            f"**Soonest upcoming expected travel:** {escape_markdown(travel_summary.get('upcoming_names') or 'named travelers not detected')}."
+        )
+        soonest["Expected date"] = soonest["Expected date"].dt.strftime("%Y-%m-%d")
+        if "Actual date" in soonest:
+            soonest["Actual date"] = soonest["Actual date"].dt.strftime("%Y-%m-%d")
+        st.dataframe(
+            soonest[["Name", "Expected date", "Actual date"]].rename(
+                columns={"Name": "Traveler"}
+            ),
+            width="stretch",
+            hide_index=True,
+        )
+
+    if len(overdue_rows):
+        st.markdown(
+            f"**Overdue expected travel:** {travel_summary['overdue_count']} travelers"
+            + (
+                f" ({escape_markdown(travel_summary['overdue_names'])})"
+                if travel_summary.get("overdue_names")
+                else ""
+            )
+            + "."
+        )
+
+    count_summary = travel_summary.get("count_summary")
+    if count_summary:
+        st.caption(
+            f"Expected count total {count_summary['expected_total']:.0f} vs actual {count_summary['actual_total']:.0f} (variance {count_summary['variance_total']:+.0f})."
+        )
+
+
+if terminal_data.get("available"):
+    with st.expander("MSC Terminal Travel Snapshot", expanded=True):
+        st.caption(
+            "Latest movement dates, traveler context, and terminal delay indicators across Norfolk, Diego Garcia, Singapore, and other detected terminals."
+            + (
+                " Delay values are estimated from expected and actual dates because no explicit delay field was detected."
+                if terminal_data.get("delay_is_estimated")
+                else ""
+            )
+        )
+        summary_frame = terminal_data["summary"].copy()
+        display_columns = [
+            "Terminal",
+            "movements",
+            "latest_movement_label",
+            "average_delay_days",
+            "max_delay_days",
+            "travelers",
+        ]
+        st.dataframe(
+            summary_frame[display_columns].rename(
+                columns={
+                    "movements": "Movements",
+                    "latest_movement_label": "Latest movement",
+                    "average_delay_days": "Avg delay (days)",
+                    "max_delay_days": "Max delay (days)",
+                    "travelers": "Travelers",
+                }
+            ),
+            width="stretch",
+            hide_index=True,
+        )
+        terminal_chart, terminal_note, _ = chart_for(
+            chart_data,
+            numeric,
+            dates,
+            categorical,
+            "TerminalBreakdown",
+        )
+        apply_chart_layout(terminal_chart)
+        st.plotly_chart(
+            terminal_chart,
+            width="stretch",
+            config=PLOTLY_CHART_CONFIG,
+            key="terminal-breakdown-chart",
+        )
+        st.caption(terminal_note)
+
+
 st.subheader("Build your own chart")
 st.caption(
     "Force the axes for an additional custom chart without changing the adaptive four-chart overview."
@@ -2422,7 +3784,11 @@ else:
 
 st.subheader("Assistant recommendations")
 st.caption(
-    "Follow-up guidance generated from the currently rendered charts and active filters."
+    (
+        "Follow-up CIVMAR travel guidance generated from the current travel charts, expected-vs-actual signals, and active filters."
+        if travel_summary.get("available")
+        else "Follow-up guidance generated from the currently rendered charts and active filters."
+    )
 )
 st.markdown(
     f'<div class="insight"><strong>Current chart finding:</strong> {insights(filtered, numeric, dates, categorical, text)}</div>',
