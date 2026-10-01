@@ -2504,7 +2504,7 @@ def chart_for(
     )
 
 
-def charts_for(data, numeric, dates, categorical):
+def charts_for(data, numeric, dates, categorical, max_charts=4):
     charts = []
     fallback_signatures = set()
     preferred_numeric = None
@@ -2648,7 +2648,7 @@ def charts_for(data, numeric, dates, categorical):
             return best_category(data, categorical), None
         return None, None
 
-    for slot_kinds in choices:
+    for slot_kinds in choices[:max_charts]:
         chart = None
         explanation = ""
         relevant_columns = []
@@ -3073,7 +3073,7 @@ def local_answer(question, data, numeric, dates, categorical, text):
     if any(word in q for word in ("chart", "graph", "visual", "plot")):
         if "line" in q or "trend" in q:
             return (
-                "Use the optional focused chart controls to choose Line, then select "
+                "Use the custom chart panel in the sidebar to choose Line, then select "
                 "a date and numeric field."
             )
 
@@ -3084,8 +3084,8 @@ def local_answer(question, data, numeric, dates, categorical, text):
             return "Use Histogram to inspect the distribution of one numeric field."
 
         return (
-            "Use the focused chart controls or the Build your own chart section "
-            "to select a custom chart type and fields."
+            "Use the custom chart panel in the sidebar to select a chart type "
+            "and any column for either axis."
         )
 
     if is_recommendation_request(q):
@@ -3213,7 +3213,7 @@ with st.sidebar:
     )
 
     st.caption(
-        "Add one or more files. The dashboard auto-adapts its four core charts "
+        "Add one or more files. The dashboard auto-adapts its top charts "
         "to the current dataset and filters."
     )
     st.caption("Everything runs locally in this session; no external data transfer.")
@@ -3238,7 +3238,7 @@ st.caption(
         "Upload travel tracking data to generate a local-only CIVMAR travel readiness view "
         "with expected-vs-actual highlights, terminal snapshots, and assistant guidance."
         if initial_context["travel"]
-        else "Upload your data to generate a local-only, adaptive four-chart overview "
+        else "Upload your data to generate a local-only overview of top signals "
         "plus assistant guidance based on the active filtered dataset."
     )
 )
@@ -3307,6 +3307,53 @@ if initial_context["travel"] and status_named_travelers:
     status_message += f" Detected {status_named_travelers:,} named travelers."
 
 st.success(status_message)
+
+preview_chart_data, preview_filled_columns = build_chart_working_copy(
+    filtered,
+    numeric,
+    categorical,
+)
+fillable_columns = [column for column in numeric + categorical if column in filtered.columns]
+missing_before = (
+    int(filtered[fillable_columns].isna().sum().sum()) if fillable_columns else 0
+)
+missing_after = (
+    int(preview_chart_data[fillable_columns].isna().sum().sum())
+    if fillable_columns
+    else 0
+)
+recovered_values = missing_before - missing_after
+
+st.subheader("🧩 Interpolate missing data")
+st.caption(
+    "Fill gaps before charting to pull more signal out of incomplete uploads. "
+    "Numeric gaps are linearly interpolated (edge gaps forward/back-filled); "
+    "categorical gaps use the most frequent value."
+)
+interpolation_snapshot = st.columns(3)
+interpolation_snapshot[0].metric("MISSING VALUES — BEFORE", f"{missing_before:,}")
+interpolation_snapshot[1].metric("MISSING VALUES — AFTER", f"{missing_after:,}")
+interpolation_snapshot[2].metric(
+    "VALUES RECOVERED",
+    f"{recovered_values:,}",
+    f"{len(preview_filled_columns)} column(s)" if recovered_values else None,
+)
+
+fill_missing_for_charts = st.checkbox(
+    "Apply interpolation to every chart below",
+    value=False,
+    help=(
+        "Only chart rendering uses this working copy. Numeric fields are linearly "
+        "interpolated and edge gaps are forward/back-filled; categorical gaps use "
+        "the most frequent value."
+    ),
+)
+
+chart_data, chart_filled_columns = (
+    (preview_chart_data, preview_filled_columns)
+    if fill_missing_for_charts
+    else (filtered.copy(), set())
+)
 
 readiness_profile = (
     prediction_readiness_components(filtered, numeric, dates, categorical)
@@ -3404,109 +3451,114 @@ st.markdown(
 
 
 st.subheader(
-    "Adaptive four-chart travel overview"
+    "Top travel signals + your custom chart"
     if travel_summary.get("available")
-    else "Adaptive four-chart overview"
+    else "Top signals + your custom chart"
 )
+st.caption(
+    "The two most important auto-selected charts, plus a fully custom third "
+    "panel — pick any column for either axis."
+)
+
+all_columns = list(chart_data.columns)
 
 with st.sidebar:
-    st.subheader("Chart data options")
-    fill_missing_for_charts = st.checkbox(
-        "Fill missing data to improve chart options",
-        value=False,
-        help=(
-            "Only chart rendering uses this working copy. Numeric fields are linearly "
-            "interpolated and edge gaps are forward/back-filled; categorical gaps use "
-            "the most frequent value."
-        ),
+    st.subheader("Custom chart")
+    st.caption("Any column can be used on either axis.")
+
+    custom_chart_type = st.selectbox(
+        "Chart type",
+        ["Bar", "Line", "Scatter", "Box", "Histogram", "Area"],
+        key="custom_chart_type",
     )
 
-    st.subheader("Focused chart (optional)")
+    if not all_columns:
+        st.warning("No columns are available to chart yet.")
+        custom_x_column = None
+        custom_y_column = None
+        custom_color_column = "None"
+        custom_facet_column = "None"
+        custom_size_column = "None"
+    else:
+        custom_x_column = st.selectbox(
+            "X-axis column",
+            all_columns,
+            key="custom_x_column",
+        )
 
-    show_focused_chart = st.checkbox(
-        "Add a focused custom chart",
-        value=False,
-        help=(
-            "The dashboard overview always shows four auto-selected visuals. "
-            "Enable this to add one custom chart."
-        ),
-    )
+        custom_y_column = None
+        if custom_chart_type != "Histogram":
+            if len(all_columns) <= 1:
+                st.caption("Only one column available; Y-axis must reuse it.")
+            y_default_index = next(
+                (
+                    index
+                    for index, column in enumerate(all_columns)
+                    if column != custom_x_column
+                ),
+                0,
+            )
+            custom_y_column = st.selectbox(
+                "Y-axis column",
+                all_columns,
+                index=y_default_index,
+                key="custom_y_column",
+            )
 
-    chart_type = None
-    x_column = None
-    y_column = None
-
-    if show_focused_chart:
-        chart_type = st.selectbox(
-            "Chart type",
-            [
-                "Bar",
-                "Line",
-                "Scatter",
-                "Histogram",
-                "Signal",
+        custom_secondary_options = [
+            "None",
+            *[
+                column
+                for column in all_columns
+                if column not in {custom_x_column, custom_y_column}
             ],
-            help="Each chart uses at most one or two fields to stay readable.",
+        ]
+        custom_color_column = st.selectbox(
+            "Color / group-by (optional)",
+            custom_secondary_options,
+            key="custom_color_column",
         )
 
-        if chart_type == "Scatter":
-            x_candidates = numeric
-        elif chart_type == "Line":
-            x_candidates = dates + categorical
-        else:
-            x_candidates = categorical + dates
-
-        x_field_options = []
-        for field in x_candidates:
-            if field not in x_field_options:
-                x_field_options.append(field)
-
-        x_column = st.selectbox(
-            "Category / X field",
-            x_field_options + ["None"],
+        custom_facet_column = st.selectbox(
+            "Facet (optional)",
+            custom_secondary_options,
+            key="custom_facet_column",
         )
 
-        y_column = st.selectbox(
-            "Numeric / Y field",
-            numeric + ["None"],
-        )
-
-        x_column = None if x_column == "None" else x_column
-        y_column = None if y_column == "None" else y_column
-
-
-chart_data, chart_filled_columns = (
-    build_chart_working_copy(filtered, numeric, categorical)
-    if fill_missing_for_charts
-    else (filtered.copy(), set())
-)
+        custom_size_column = None
+        if custom_chart_type == "Scatter":
+            custom_size_column = st.selectbox(
+                "Size (optional)",
+                custom_secondary_options,
+                key="custom_size_column",
+            )
 
 charts = charts_for(
     chart_data,
     numeric,
     dates,
     categorical,
+    max_charts=2,
 )
 
-custom_view = None
-if show_focused_chart and chart_type:
-    custom_view = chart_for(
-        chart_data,
-        numeric,
-        dates,
-        categorical,
-        chart_type,
-        x_column,
-        y_column,
-    )
+custom_chart, custom_note, custom_columns = build_custom_chart(
+    chart_data,
+    numeric,
+    dates,
+    categorical,
+    custom_chart_type,
+    custom_x_column,
+    custom_y_column,
+    None if custom_color_column == "None" else custom_color_column,
+    None if custom_facet_column == "None" else custom_facet_column,
+    None if custom_size_column in (None, "None") else custom_size_column,
+)
 
-
-dashboard_columns = st.columns(2)
+dashboard_columns = st.columns(3)
 
 for index, (chart, explanation, relevant_columns) in enumerate(charts):
     apply_chart_layout(chart)
-    column = dashboard_columns[index % 2]
-    with column:
+    with dashboard_columns[index]:
         st.plotly_chart(
             chart,
             width="stretch",
@@ -3520,23 +3572,23 @@ for index, (chart, explanation, relevant_columns) in enumerate(charts):
         ):
             st.caption("ℹ️ Interpolated data used for this chart.")
 
-
-if custom_view:
-    st.subheader("Focused custom chart")
-    focused_chart, focused_note, focused_columns = custom_view
-    apply_chart_layout(focused_chart)
-    st.plotly_chart(
-        focused_chart,
-        width="stretch",
-        config=PLOTLY_CHART_CONFIG,
-        key="focused-custom-chart",
-    )
-    st.caption(f"Focused chart: {focused_note}")
-    if fill_missing_for_charts and chart_uses_interpolation(
-        focused_columns,
-        chart_filled_columns,
-    ):
-        st.caption("ℹ️ Interpolated data used for this chart.")
+with dashboard_columns[2]:
+    if custom_chart is None:
+        st.warning(custom_note)
+    else:
+        apply_chart_layout(custom_chart)
+        st.plotly_chart(
+            custom_chart,
+            width="stretch",
+            config=PLOTLY_CHART_CONFIG,
+            key="custom-panel-chart",
+        )
+        st.caption(f"Custom: {custom_note}")
+        if fill_missing_for_charts and chart_uses_interpolation(
+            custom_columns,
+            chart_filled_columns,
+        ):
+            st.caption("ℹ️ Interpolated data used for this chart.")
 
 
 if travel_summary.get("available"):
@@ -3655,131 +3707,6 @@ if terminal_data.get("available"):
             key="terminal-breakdown-chart",
         )
         st.caption(terminal_note)
-
-
-st.subheader("Build your own chart")
-st.caption(
-    "Force the axes for an additional custom chart without changing the adaptive four-chart overview."
-)
-
-builder_chart_type = st.selectbox(
-    "Chart type",
-    ["Bar", "Line", "Scatter", "Box", "Histogram", "Area"],
-    key="builder_chart_type",
-)
-
-if builder_chart_type == "Histogram":
-    builder_x_options = numeric
-elif builder_chart_type == "Scatter":
-    builder_x_options = numeric
-elif builder_chart_type in {"Line", "Area"}:
-    builder_x_options = dates + categorical
-elif builder_chart_type == "Box":
-    builder_x_options = categorical + dates
-else:
-    builder_x_options = categorical + dates + text
-
-builder_control_columns = st.columns(4)
-builder_x_column = builder_control_columns[0].selectbox(
-    "X-axis column",
-    builder_x_options if builder_x_options else ["No compatible columns"],
-    key="builder_x_column",
-)
-
-builder_y_column = None
-if builder_chart_type != "Histogram":
-    builder_y_options = numeric
-    builder_y_column = builder_control_columns[1].selectbox(
-        "Y-axis column",
-        builder_y_options if builder_y_options else ["No compatible columns"],
-        key="builder_y_column",
-    )
-
-color_options = [
-    "None",
-    *[
-        column
-        for column in categorical
-        if column not in {builder_x_column, builder_y_column}
-    ],
-]
-facet_options = [
-    "None",
-    *[
-        column
-        for column in categorical + dates
-        if column not in {builder_x_column, builder_y_column}
-    ],
-]
-
-builder_color_column = builder_control_columns[2].selectbox(
-    "Color / group-by (optional)",
-    color_options,
-    key="builder_color_column",
-)
-builder_facet_column = builder_control_columns[3].selectbox(
-    "Facet (optional)",
-    facet_options,
-    key="builder_facet_column",
-)
-
-builder_size_column = None
-if builder_chart_type == "Scatter":
-    size_options = [
-        "None",
-        *[
-            column
-            for column in numeric
-            if column not in {builder_x_column, builder_y_column}
-        ],
-    ]
-    builder_size_column = st.selectbox(
-        "Size (optional)",
-        size_options,
-        key="builder_size_column",
-    )
-
-builder_invalid_selection = (
-    not builder_x_options
-    or builder_x_column == "No compatible columns"
-    or (
-        builder_chart_type != "Histogram"
-        and (not numeric or builder_y_column == "No compatible columns")
-    )
-)
-
-if builder_invalid_selection:
-    st.warning("No compatible column combination is available for this chart type yet.")
-else:
-    builder_chart, builder_note, builder_columns = build_custom_chart(
-        chart_data,
-        numeric,
-        dates,
-        categorical,
-        builder_chart_type,
-        builder_x_column,
-        builder_y_column,
-        None if builder_color_column == "None" else builder_color_column,
-        None if builder_facet_column == "None" else builder_facet_column,
-        None if builder_size_column == "None" else builder_size_column,
-    )
-
-    if builder_chart is None:
-        st.warning(builder_note)
-    else:
-        apply_chart_layout(builder_chart)
-        st.plotly_chart(
-            builder_chart,
-            width="stretch",
-            config=PLOTLY_CHART_CONFIG,
-            key="builder-custom-chart",
-        )
-        st.caption(builder_note)
-        if fill_missing_for_charts and chart_uses_interpolation(
-            builder_columns,
-            chart_filled_columns,
-        ):
-            st.caption("ℹ️ Interpolated data used for this chart.")
 
 
 st.subheader("Assistant recommendations")
