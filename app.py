@@ -3488,10 +3488,18 @@ with st.sidebar:
 
         custom_y_column = None
         if custom_chart_type != "Histogram":
+            y_default_index = next(
+                (
+                    index
+                    for index, column in enumerate(all_columns)
+                    if column != custom_x_column
+                ),
+                0,
+            )
             custom_y_column = st.selectbox(
                 "Y-axis column",
                 all_columns,
-                index=min(1, len(all_columns) - 1),
+                index=y_default_index,
                 key="custom_y_column",
             )
 
