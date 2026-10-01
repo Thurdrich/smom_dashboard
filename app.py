@@ -3463,7 +3463,7 @@ st.caption(
 all_columns = list(chart_data.columns)
 
 with st.sidebar:
-    st.subheader("Custom chart (3rd panel)")
+    st.subheader("Custom chart")
     st.caption("Any column can be used on either axis.")
 
     custom_chart_type = st.selectbox(
