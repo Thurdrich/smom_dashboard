@@ -3460,7 +3460,7 @@ st.caption(
     "panel — pick any column for either axis."
 )
 
-all_columns = list(filtered.columns)
+all_columns = list(chart_data.columns)
 
 with st.sidebar:
     st.subheader("Custom chart (3rd panel)")
@@ -3488,6 +3488,8 @@ with st.sidebar:
 
         custom_y_column = None
         if custom_chart_type != "Histogram":
+            if len(all_columns) <= 1:
+                st.caption("Only one column available; Y-axis must reuse it.")
             y_default_index = next(
                 (
                     index
