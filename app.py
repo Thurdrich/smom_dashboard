@@ -3472,48 +3472,56 @@ with st.sidebar:
         key="custom_chart_type",
     )
 
-    custom_x_column = st.selectbox(
-        "X-axis column",
-        all_columns,
-        key="custom_x_column",
-    )
-
-    custom_y_column = None
-    if custom_chart_type != "Histogram":
-        custom_y_column = st.selectbox(
-            "Y-axis column",
+    if not all_columns:
+        st.warning("No columns are available to chart yet.")
+        custom_x_column = None
+        custom_y_column = None
+        custom_color_column = "None"
+        custom_facet_column = "None"
+        custom_size_column = "None"
+    else:
+        custom_x_column = st.selectbox(
+            "X-axis column",
             all_columns,
-            index=min(1, len(all_columns) - 1),
-            key="custom_y_column",
+            key="custom_x_column",
         )
 
-    custom_color_options = [
-        "None",
-        *[
-            column
-            for column in all_columns
-            if column not in {custom_x_column, custom_y_column}
-        ],
-    ]
-    custom_color_column = st.selectbox(
-        "Color / group-by (optional)",
-        custom_color_options,
-        key="custom_color_column",
-    )
+        custom_y_column = None
+        if custom_chart_type != "Histogram":
+            custom_y_column = st.selectbox(
+                "Y-axis column",
+                all_columns,
+                index=min(1, len(all_columns) - 1),
+                key="custom_y_column",
+            )
 
-    custom_facet_column = st.selectbox(
-        "Facet (optional)",
-        custom_color_options,
-        key="custom_facet_column",
-    )
-
-    custom_size_column = None
-    if custom_chart_type == "Scatter":
-        custom_size_column = st.selectbox(
-            "Size (optional)",
-            custom_color_options,
-            key="custom_size_column",
+        custom_secondary_options = [
+            "None",
+            *[
+                column
+                for column in all_columns
+                if column not in {custom_x_column, custom_y_column}
+            ],
+        ]
+        custom_color_column = st.selectbox(
+            "Color / group-by (optional)",
+            custom_secondary_options,
+            key="custom_color_column",
         )
+
+        custom_facet_column = st.selectbox(
+            "Facet (optional)",
+            custom_secondary_options,
+            key="custom_facet_column",
+        )
+
+        custom_size_column = None
+        if custom_chart_type == "Scatter":
+            custom_size_column = st.selectbox(
+                "Size (optional)",
+                custom_secondary_options,
+                key="custom_size_column",
+            )
 
 charts = charts_for(
     chart_data,
