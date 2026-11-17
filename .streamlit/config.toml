@@ -5,3 +5,10 @@ port = 8501
 
 [global]
 email = ""
+
+[theme]
+base = "light"
+primaryColor = "#07569a"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#eef4f9"
+textColor = "#172b3a"
