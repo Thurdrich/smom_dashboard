@@ -97,6 +97,66 @@ def chart_tables(data, fields):
     }
 
 
+def grouped_traveler_counts(data, group_columns, traveler_column=None):
+    if not group_columns or any(column not in data.columns for column in group_columns):
+        return None
+    frame = data[group_columns].copy()
+    for column in group_columns:
+        labels = frame[column].fillna("").astype(str).str.strip()
+        frame[column] = labels.replace("", "Missing")
+    if traveler_column and traveler_column in data.columns:
+        names = data[traveler_column].fillna("").astype(str).str.strip().str.replace(
+            r"\s+", " ", regex=True
+        ).str.casefold()
+        frame["Traveler"] = names
+        frame = frame[frame["Traveler"] != ""]
+        counts = frame.groupby(group_columns, sort=False, dropna=False)["Traveler"].nunique()
+    else:
+        counts = frame.groupby(group_columns, sort=False, dropna=False).size()
+    return counts.rename("Count").reset_index().sort_values(
+        "Count", ascending=False, kind="stable"
+    ).reset_index(drop=True)
+
+
+def civmar_metrics(data, fields):
+    traveler_column = fields.get("traveler")
+    if traveler_column and traveler_column in data.columns:
+        names = data[traveler_column].fillna("").astype(str).str.strip().str.replace(
+            r"\s+", " ", regex=True
+        ).str.casefold()
+        total = names[names != ""].nunique()
+
+        def count_rows(mask):
+            return names[mask & (names != "")].nunique()
+    else:
+        total = len(data)
+
+        def count_rows(mask):
+            return int(mask.sum())
+
+    status_column = fields.get("status")
+    statuses = (
+        data[status_column].fillna("").astype(str).str.strip().str.upper()
+        if status_column and status_column in data.columns
+        else pd.Series("", index=data.index)
+    )
+    lodging_column = fields.get("lodging")
+    lodging = (
+        data[lodging_column].fillna("").astype(str).str.strip().ne("")
+        if lodging_column and lodging_column in data.columns
+        else pd.Series(False, index=data.index)
+    )
+    cancelled = statuses.str.startswith("CANCELLED")
+    return {
+        "total": total,
+        "pending": count_rows(statuses.eq("PENDING")),
+        "in_transit": count_rows(statuses.isin(("IN TRANSIT", "STS TRANSIT"))),
+        "arrived_on_location": count_rows(statuses.isin(("ARRIVED", "ON LOCATION"))),
+        "lodging": count_rows(lodging),
+        "cancellation_rate": (count_rows(cancelled) / total * 100) if total else 0,
+    }
+
+
 def local_answer(question, data, fields, tables):
     q = question.casefold().strip()
     if data.empty:
