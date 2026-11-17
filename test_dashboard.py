@@ -5,7 +5,15 @@ from unittest.mock import patch
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
-from dashboard import chart_tables, default_field, load_uploads, local_answer, parse_movement_dates
+from dashboard import (
+    chart_tables,
+    civmar_metrics,
+    default_field,
+    grouped_traveler_counts,
+    load_uploads,
+    local_answer,
+    parse_movement_dates,
+)
 
 
 class Upload:
@@ -50,6 +58,24 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(str(dates.iloc[0].date()), "2026-09-11")
         self.assertEqual(dates.notna().sum(), 2)
 
+    def test_grouped_traveler_counts_and_civmar_metrics(self):
+        data = pd.DataFrame({
+            "PERSON": ["A", "B", "C", "D", "E", " a "],
+            "STATUS": ["PENDING", "IN TRANSIT", "ARRIVED", "ON LOCATION", "CANCELLED", "PENDING"],
+            "LODGING": ["Hotel", "", "", "", "Room", ""],
+            "DIRECTION": ["GOING", "GOING", "LEAVING", "GOING", "LEAVING", "GOING"],
+        })
+        fields = {"traveler": "PERSON", "status": "STATUS", "lodging": "LODGING"}
+        metrics = civmar_metrics(data, fields)
+        self.assertEqual(metrics["total"], 5)
+        self.assertEqual(metrics["pending"], 1)
+        self.assertEqual(metrics["in_transit"], 1)
+        self.assertEqual(metrics["arrived_on_location"], 2)
+        self.assertEqual(metrics["lodging"], 2)
+        self.assertEqual(metrics["cancellation_rate"], 20)
+        counts = grouped_traveler_counts(data, ["DIRECTION"], "PERSON")
+        self.assertEqual(dict(zip(counts["DIRECTION"], counts["Count"])), {"GOING": 3, "LEAVING": 2})
+
     def test_chat_uses_same_filtered_chart_aggregates(self):
         filtered = self.data.loc[self.data["STATUS"] == "PENDING"]
         tables = chart_tables(filtered, self.fields)
@@ -80,7 +106,7 @@ class DashboardTests(unittest.TestCase):
         with patch("dashboard.load_uploads", return_value=(data, errors)):
             app = AppTest.from_file("app.py").run()
             self.assertFalse(app.exception)
-            self.assertEqual(len(app.get("plotly_chart")), 4)
+            self.assertEqual(len(app.get("plotly_chart")), 3)
             app.chat_input[0].set_value("Which vessel has the most travelers?").run()
             self.assertFalse(app.exception)
             self.assertEqual(len(app.chat_message), 2)

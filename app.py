@@ -6,7 +6,9 @@ import streamlit as st
 
 from dashboard import (
     SUPPORTED_TYPES,
+    chart_tables,
     civmar_metrics,
+    default_field,
     grouped_traveler_counts,
     load_uploads,
     local_answer,
@@ -185,16 +187,7 @@ def _render_overview():
             st.markdown(message["content"])
     question = st.chat_input("Ask about status, vessels, movement dates, or locations")
     if question:
-        tables = {
-            "status": grouped_traveler_counts(filtered, [status_column], fields["traveler"])
-            if status_column else None,
-            "vessel": grouped_traveler_counts(filtered, [vessel_column], fields["traveler"])
-            if vessel_column else None,
-            "date": None,
-            "location": grouped_traveler_counts(
-                filtered, [fields["location"]], fields["traveler"]
-            ) if fields["location"] else None,
-        }
+        tables = chart_tables(filtered, fields)
         answer = local_answer(question, filtered, fields, tables)
         st.session_state.chat_history.extend([
             {"role": "user", "content": question},
@@ -264,6 +257,21 @@ def _render_flight_dates():
     if counts is None or counts.empty:
         st.info("No named travelers with valid flight dates are available.")
         return
+    traveler_column = fields["traveler"]
+    if traveler_column:
+        names = dated[groups + [traveler_column]].copy()
+        names["Traveler"] = names[traveler_column].fillna("").astype(str).str.strip().str.replace(
+            r"\s+", " ", regex=True
+        )
+        names["Name key"] = names["Traveler"].str.casefold()
+        names = names[names["Name key"] != ""].drop_duplicates(groups + ["Name key"])
+        traveler_names = (
+            names.groupby(groups, sort=False)["Traveler"]
+            .agg(", ".join)
+            .rename("Traveler names")
+            .reset_index()
+        )
+        counts = counts.merge(traveler_names, on=groups, how="left")
     if direction_column:
         counts = counts.rename(columns={direction_column: "Direction"})
         chart = px.bar(
@@ -272,6 +280,7 @@ def _render_flight_dates():
             y="Count",
             color="Direction",
             barmode="group",
+            hover_data=["Traveler names"] if traveler_column else None,
             color_discrete_sequence=["#073b70", "#c5a500", "#b6243d"],
             labels={"Count": "Travelers"},
         )
@@ -280,6 +289,7 @@ def _render_flight_dates():
             counts,
             x="Flight date",
             y="Count",
+            hover_data=["Traveler names"] if traveler_column else None,
             color_discrete_sequence=["#073b70"],
             labels={"Count": "Travelers"},
         )
@@ -385,16 +395,7 @@ with st.sidebar:
         ("rating", "Rating"),
         ("lodging", "Lodging"),
     ]:
-        default = next(
-            (column for column in columns if column.strip().lower() in defaults[key]),
-            None,
-        )
-        if key == "date":
-            normalized = {column.strip().lower(): column for column in columns}
-            default = next(
-                (normalized[candidate] for candidate in defaults[key] if candidate in normalized),
-                None,
-            )
+        default = default_field(columns, defaults[key])
         fields[key] = st.selectbox(
             label,
             options,
