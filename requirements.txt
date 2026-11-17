@@ -4,3 +4,6 @@ plotly
 scikit-learn
 statsmodels
 openpyxl
+xlrd
+pyarrow
+lxml

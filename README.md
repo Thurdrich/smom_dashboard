@@ -1,21 +1,6 @@
-# SMOM Adaptive Insight Dashboard
+# SMOM Travel Analysis Dashboard
 
-SMOM Dashboard is a Streamlit **Adaptive Insight Dashboard**. Upload one or more datasets and the app profiles them, computes dataset signal/readiness indicators, and renders a polished four-chart overview tuned to the detected schema and filtered data.
-
-## Supported uploads
-
-- CSV (`.csv`)
-- Excel (`.xlsx`, `.xls`)
-- JSON (`.json`)
-- Parquet (`.parquet`)
-- XML (`.xml`)
-
-Multiple files can be uploaded at once. They are combined by column name, with a `Source file` field added so the result remains traceable.
-
-The app is local-only for analysis in-session:
-- no external AI API calls
-- no external data transfer
-- no bundled preview/demo fallback dataset
+Upload travel data to view four charts in a 2×2 layout: movement rows by status, distinct travelers by vessel, movement rows by expected date, and distinct travelers by location. A local, rule-based chat below the charts summarizes the same filtered data; it is not a general-purpose AI assistant.
 
 ## Run locally
 
@@ -24,14 +9,8 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-The Streamlit app entrypoint is `app.py`. Streamlit Cloud can deploy the `main` branch directly and will refresh after the commit is built.
+Upload CSV, Excel, JSON, Parquet, or XML files in the sidebar. Multiple files are combined by column name. Excel uploads use the first sheet. No sample data is loaded automatically and no data is sent to an external AI service.
 
-## How the analysis works
+Check or change the detected field selections in the sidebar. `DATE 1` is the preferred default expected-movement date; if it is absent, a recognized expected, planned, or travel date is selected. Otherwise choose a date explicitly. Missing or invalid dates are excluded from the timeline. Status and timeline counts are rows, not unique travelers. Vessel and location counts deduplicate traveler names or IDs within each group, ignoring case and extra whitespace; rows with no traveler are excluded. A traveler can appear in more than one group. Missing group values appear as `Missing`.
 
-The dashboard detects numeric, categorical, text, and date-like fields without requiring a fixed schema.
-
-- **Core dashboard:** always renders a 4-chart adaptive overview. Each slot uses a prioritized chart-family fallback chain (for example composition-like, trend-like, relationship-like, distribution-like, then summary/count views) based on the detected schema.
-- **Focused custom chart (optional):** you can add one extra chart without replacing the core four-chart overview.
-- **Assistant recommendations:** after chart rendering, recommendations are generated from findings in the current filtered dataset and presented as follow-up guidance.
-- **Local assistant chat:** a rule-based assistant answers questions using only the uploaded/filtered data.
-- **Dataset signal summary:** readiness and signal indicators are shown from coverage/schema/trendability/signal density in the current filtered slice.
+Filters affect all charts and chat. Chat history is cleared when the data, filters, or field selections change. Example questions: “Which vessel has the most travelers?”, “Summarize the status chart”, “How many records are there?”, and “Summarize the movement dates”. The assistant cannot answer arbitrary questions or determine causes.
