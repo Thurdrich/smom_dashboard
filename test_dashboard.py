@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -5,7 +6,15 @@ from unittest.mock import patch
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
-from dashboard import chart_tables, default_field, load_uploads, local_answer, parse_movement_dates
+from dashboard import (
+    chart_tables,
+    civmar_metrics,
+    default_field,
+    grouped_traveler_counts,
+    load_uploads,
+    local_answer,
+    parse_movement_dates,
+)
 
 
 class Upload:
@@ -50,6 +59,51 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(str(dates.iloc[0].date()), "2026-09-11")
         self.assertEqual(dates.notna().sum(), 2)
 
+    def test_grouped_traveler_counts_and_civmar_metrics(self):
+        data = pd.DataFrame({
+            "PERSON": ["A", "B", "C", "D", "E", " a "],
+            "STATUS": ["PENDING", "IN TRANSIT", "ARRIVED", "ON LOCATION", "CANCELLED", "PENDING"],
+            "LODGING": ["Hotel", "", "", "", "Room", ""],
+            "DIRECTION": ["GOING", "GOING", "LEAVING", "GOING", "LEAVING", "GOING"],
+        })
+        fields = {"traveler": "PERSON", "status": "STATUS", "lodging": "LODGING"}
+        metrics = civmar_metrics(data, fields)
+        self.assertEqual(metrics["total"], 5)
+        self.assertEqual(metrics["pending"], 1)
+        self.assertEqual(metrics["in_transit"], 1)
+        self.assertEqual(metrics["arrived_on_location"], 2)
+        self.assertEqual(metrics["lodging"], 2)
+        self.assertEqual(metrics["cancellation_rate"], 20)
+        counts = grouped_traveler_counts(data, ["DIRECTION"], "PERSON")
+        self.assertEqual(dict(zip(counts["DIRECTION"], counts["Count"])), {"GOING": 3, "LEAVING": 2})
+        duplicate_counts = grouped_traveler_counts(
+            data, ["DIRECTION", "DIRECTION"], "PERSON"
+        )
+        self.assertEqual(duplicate_counts.to_dict("records"), counts.to_dict("records"))
+
+    def test_flight_date_page_includes_names_in_bar_hover(self):
+        data = pd.DataFrame({
+            "STATUS": ["PENDING", "PENDING"],
+            "CIVMAR/PER": ["Smith", "Jones"],
+            "VESSEL": ["A", "A"],
+            "DATE 1": ["9/11/2026", "9/11/2026"],
+            "LOCATION": ["Port", "Port"],
+            "IN/OUT": ["GOING", "GOING"],
+            "RATING": ["AB", "BM"],
+            "LODGING": ["", ""],
+        })
+        with patch("dashboard.load_uploads", return_value=(data, [])):
+            app = AppTest.from_file("app.py").run()
+            self.assertFalse(app.exception)
+            link = next(link for link in app.page_link if link.label == "Open Traveler Flight Dates")
+            app._page_hash = link.proto.page_script_hash
+            app.run()
+            self.assertFalse(app.exception)
+            figure = json.loads(app.get("plotly_chart")[0].proto.spec)
+            trace = figure["data"][0]
+            self.assertIn("Traveler names", trace["hovertemplate"])
+            self.assertEqual(trace["customdata"], [["Smith, Jones"]])
+
     def test_chat_uses_same_filtered_chart_aggregates(self):
         filtered = self.data.loc[self.data["STATUS"] == "PENDING"]
         tables = chart_tables(filtered, self.fields)
@@ -80,7 +134,7 @@ class DashboardTests(unittest.TestCase):
         with patch("dashboard.load_uploads", return_value=(data, errors)):
             app = AppTest.from_file("app.py").run()
             self.assertFalse(app.exception)
-            self.assertEqual(len(app.get("plotly_chart")), 4)
+            self.assertEqual(len(app.get("plotly_chart")), 3)
             app.chat_input[0].set_value("Which vessel has the most travelers?").run()
             self.assertFalse(app.exception)
             self.assertEqual(len(app.chat_message), 2)
@@ -88,6 +142,9 @@ class DashboardTests(unittest.TestCase):
             app.multiselect[0].select("PENDING").run()
             self.assertFalse(app.exception)
             self.assertEqual(len(app.chat_message), 0)
+            app.selectbox[5].set_value("STATUS").run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any("different column" in item.value for item in app.warning))
 
 
 if __name__ == "__main__":
