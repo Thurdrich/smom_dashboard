@@ -19,9 +19,39 @@ from dashboard import (
 st.set_page_config(page_title="SMOM Travel Dashboard", layout="wide")
 st.markdown(
     """<style>
-    .stApp { background-color: #f7f6f2; color: #242424; }
     .block-container { max-width: 1800px; padding-top: 1.5rem; }
     h1 { text-align: center; }
+    [data-testid="stPageLink"] a {
+        color: #07569a;
+        background: #eef4f9;
+        border: 1px solid #9bb6cb;
+        border-radius: 0.4rem;
+        padding: 0.4rem 0.7rem;
+    }
+    [data-testid="stPageLink"] a:hover,
+    [data-testid="stPageLink"] a:focus-visible {
+        color: #073b70;
+        background: #dceaf5;
+        border-color: #07569a;
+    }
+    [data-testid="stPageLink"] a:focus-visible {
+        outline: 2px solid #07569a;
+        outline-offset: 2px;
+    }
+    .js-plotly-plot .plotly .modebar {
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 0.3rem;
+    }
+    .js-plotly-plot .plotly .modebar--hover > :not(.logo) {
+        opacity: 1 !important;
+    }
+    .js-plotly-plot .plotly .modebar-btn path {
+        fill: #36566f !important;
+    }
+    .js-plotly-plot .plotly .modebar-btn:hover path,
+    .js-plotly-plot .plotly .modebar-btn.active path {
+        fill: #07569a !important;
+    }
     </style>""",
     unsafe_allow_html=True,
 )
@@ -127,10 +157,11 @@ def _render_overview():
                     "#073b70",
                     "#b6243d",
                     "#07569a",
-                    "#c5a500",
-                    "#8c8c8c",
+                    "#806500",
+                    "#646464",
                 ],
             )
+            chart.update_traces(textfont=dict(color="white", size=14))
             chart.update_layout(template="plotly_white", height=260, margin=dict(t=8, b=8))
             st.plotly_chart(chart, width="stretch", key="overview_status")
         st.page_link(status_page, label="Open CIVMAR tracker by status")
