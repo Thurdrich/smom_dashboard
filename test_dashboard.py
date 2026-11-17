@@ -76,6 +76,10 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(metrics["cancellation_rate"], 20)
         counts = grouped_traveler_counts(data, ["DIRECTION"], "PERSON")
         self.assertEqual(dict(zip(counts["DIRECTION"], counts["Count"])), {"GOING": 3, "LEAVING": 2})
+        duplicate_counts = grouped_traveler_counts(
+            data, ["DIRECTION", "DIRECTION"], "PERSON"
+        )
+        self.assertEqual(duplicate_counts.to_dict("records"), counts.to_dict("records"))
 
     def test_flight_date_page_includes_names_in_bar_hover(self):
         data = pd.DataFrame({
@@ -138,6 +142,9 @@ class DashboardTests(unittest.TestCase):
             app.multiselect[0].select("PENDING").run()
             self.assertFalse(app.exception)
             self.assertEqual(len(app.chat_message), 0)
+            app.selectbox[5].set_value("STATUS").run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any("different column" in item.value for item in app.warning))
 
 
 if __name__ == "__main__":

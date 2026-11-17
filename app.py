@@ -393,7 +393,7 @@ with st.sidebar:
     st.header("Chart fields")
     st.caption("Check detected fields or select the appropriate columns.")
     fields = {}
-    for key, label in [
+    field_labels = [
         ("status", "Status"),
         ("traveler", "Traveler name or ID"),
         ("vessel", "Vessel"),
@@ -402,13 +402,30 @@ with st.sidebar:
         ("direction", "Direction"),
         ("rating", "Rating"),
         ("lodging", "Lodging"),
-    ]:
+    ]
+    for key, label in field_labels:
         default = default_field(columns, defaults[key])
         fields[key] = st.selectbox(
             label,
             options,
             index=options.index(default),
             format_func=lambda value: value or "Not selected",
+        )
+
+    selected_columns = {}
+    duplicate_fields = []
+    for key, label in field_labels:
+        column = fields[key]
+        if column and column in selected_columns:
+            duplicate_fields.append(f"{label} and {selected_columns[column]}")
+            fields[key] = None
+        elif column:
+            selected_columns[column] = label
+    if duplicate_fields:
+        st.warning(
+            "Each chart field must use a different column. Choose another field for "
+            + ", ".join(duplicate_fields)
+            + "."
         )
 
     st.header("Filters")

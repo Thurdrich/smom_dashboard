@@ -98,6 +98,7 @@ def chart_tables(data, fields):
 
 
 def grouped_traveler_counts(data, group_columns, traveler_column=None):
+    group_columns = list(dict.fromkeys(group_columns))
     if not group_columns or any(column not in data.columns for column in group_columns):
         return None
     frame = data[group_columns].copy()
