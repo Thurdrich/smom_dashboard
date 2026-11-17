@@ -142,7 +142,7 @@ def civmar_metrics(data, fields):
     )
     lodging_column = fields.get("lodging")
     lodging = (
-        data[lodging_column].fillna("").astype(str).str.strip().ne("")
+        data[lodging_column].astype("string").fillna("").str.strip().ne("")
         if lodging_column and lodging_column in data.columns
         else pd.Series(False, index=data.index)
     )

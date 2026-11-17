@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -75,6 +76,29 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(metrics["cancellation_rate"], 20)
         counts = grouped_traveler_counts(data, ["DIRECTION"], "PERSON")
         self.assertEqual(dict(zip(counts["DIRECTION"], counts["Count"])), {"GOING": 3, "LEAVING": 2})
+
+    def test_flight_date_page_includes_names_in_bar_hover(self):
+        data = pd.DataFrame({
+            "STATUS": ["PENDING", "PENDING"],
+            "CIVMAR/PER": ["Smith", "Jones"],
+            "VESSEL": ["A", "A"],
+            "DATE 1": ["9/11/2026", "9/11/2026"],
+            "LOCATION": ["Port", "Port"],
+            "IN/OUT": ["GOING", "GOING"],
+            "RATING": ["AB", "BM"],
+            "LODGING": ["", ""],
+        })
+        with patch("dashboard.load_uploads", return_value=(data, [])):
+            app = AppTest.from_file("app.py").run()
+            self.assertFalse(app.exception)
+            link = next(link for link in app.page_link if link.label == "Open Traveler Flight Dates")
+            app._page_hash = link.proto.page_script_hash
+            app.run()
+            self.assertFalse(app.exception)
+            figure = json.loads(app.get("plotly_chart")[0].proto.spec)
+            trace = figure["data"][0]
+            self.assertIn("Traveler names", trace["hovertemplate"])
+            self.assertEqual(trace["customdata"], [["Smith, Jones"]])
 
     def test_chat_uses_same_filtered_chart_aggregates(self):
         filtered = self.data.loc[self.data["STATUS"] == "PENDING"]

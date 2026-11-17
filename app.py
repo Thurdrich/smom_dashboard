@@ -260,6 +260,10 @@ def _render_flight_dates():
     traveler_column = fields["traveler"]
     if traveler_column:
         names = dated[groups + [traveler_column]].copy()
+        for column in groups:
+            names[column] = names[column].astype("string").fillna("").str.strip().replace(
+                "", "Missing"
+            )
         names["Traveler"] = names[traveler_column].fillna("").astype(str).str.strip().str.replace(
             r"\s+", " ", regex=True
         )
