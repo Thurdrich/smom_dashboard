@@ -316,7 +316,11 @@ def _render_flight_dates():
         "COMMENTS & ACTIONS",
     ]
     visible = [column for column in preferred if column and column in table.columns]
-    st.dataframe(table[visible], width="stretch", hide_index=True)
+    display_table = table[visible].copy()
+    for column in display_table.columns:
+        if display_table[column].dtype == object:
+            display_table[column] = display_table[column].astype("string")
+    st.dataframe(display_table, width="stretch", hide_index=True)
     st.caption(f"Baseline: {date_column}. Missing and invalid dates are excluded.")
     st.page_link(home_page, label="Back to dashboard")
 
